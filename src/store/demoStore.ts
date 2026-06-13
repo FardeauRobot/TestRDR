@@ -2,7 +2,7 @@ import type { GeoPoint, Member } from '../types'
 import { uid } from '../lib/util'
 import { BaseStore, type Crew, type NewConsumption, type NewProfile } from './store'
 
-const DATA_KEY = 'crewwatch.demo.v1'
+const DATA_KEY = 'crewwatch.demo.v2'
 const CREW_KEY = 'crewwatch.crew.v1'
 const meKey = (crewId: string) => `crewwatch.me.${crewId}`
 
@@ -55,7 +55,9 @@ export class DemoStore extends BaseStore {
     super()
     this.bucket = this.loadBucket()
     const crew = this.loadCrew()
-    const meId = crew ? localStorage.getItem(meKey(crew.id)) : null
+    const storedMe = crew ? localStorage.getItem(meKey(crew.id)) : null
+    // Guard against a stale profile id (e.g. after a storage-version bump).
+    const meId = storedMe && this.bucket.members.some((m) => m.id === storedMe) ? storedMe : null
     this.state = { crew, members: this.bucket.members, events: this.bucket.events, meId, ready: true }
   }
 
@@ -64,12 +66,13 @@ export class DemoStore extends BaseStore {
       const raw = localStorage.getItem(DATA_KEY)
       if (raw) {
         const p = JSON.parse(raw)
-        if (p.members?.length) return { members: p.members, events: p.events ?? [] }
+        return { members: p.members ?? [], events: p.events ?? [] }
       }
     } catch {
       /* ignore */
     }
-    const fresh = seed()
+    // Sample crew only in local dev (`npm run dev`); deployed builds start empty.
+    const fresh = import.meta.env.DEV ? seed() : { members: [], events: [] }
     localStorage.setItem(DATA_KEY, JSON.stringify(fresh))
     return fresh
   }

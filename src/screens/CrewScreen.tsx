@@ -27,6 +27,15 @@ export function CrewScreen({ onLog, onOpen }: { onLog: () => void; onOpen: (id: 
 
   return (
     <>
+      {store.mode === 'demo' && (
+        <div className="banner warn" style={{ marginTop: 6 }}>
+          <span>📴</span>
+          <span>
+            <strong>Demo mode — not syncing.</strong> Data stays on this phone only and others
+            won't appear. Connect Supabase (see DEPLOY.md) to sync your real crew.
+          </span>
+        </div>
+      )}
       {me && (
         <div className="card" style={{ marginTop: 6 }}>
           <MemberCard member={me} events={events} now={now} isMe />
