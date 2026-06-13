@@ -12,6 +12,8 @@ interface ProfileRow {
   color: string
   is_admin: boolean
   mix_warnings: boolean
+  status: string | null
+  status_at: string | null
   last_check_in: string
   sos: boolean
   lat: number | null
@@ -38,6 +40,8 @@ function toMember(r: ProfileRow): Member {
     color: r.color,
     isAdmin: r.is_admin,
     mixWarnings: r.mix_warnings,
+    status: r.status ?? undefined,
+    statusAt: r.status_at ? new Date(r.status_at).getTime() : undefined,
     lastCheckIn: new Date(r.last_check_in).getTime(),
     sos: r.sos,
     location:
@@ -115,10 +119,10 @@ export class SupabaseStore extends BaseStore {
       this.sb.from('profiles').select('*').eq('crew_id', crewId),
       this.sb.from('events').select('*').eq('crew_id', crewId).order('at', { ascending: false }).limit(500)
     ])
-    this.set({
-      members: (profiles ?? []).map(toMember),
-      events: (events ?? []).map(toEvent)
-    })
+    const members = (profiles ?? []).map(toMember)
+    // If our own profile vanished (removed by an admin, or crew deleted), drop meId.
+    const meId = this.state.meId && members.some((m) => m.id === this.state.meId) ? this.state.meId : null
+    this.set({ members, events: (events ?? []).map(toEvent), meId })
   }
 
   async createCrew(name: string, password: string): Promise<void> {
@@ -146,6 +150,15 @@ export class SupabaseStore extends BaseStore {
     }
     localStorage.removeItem(CREW_KEY)
     this.set({ crew: null, meId: null, members: [], events: [] })
+  }
+
+  async deleteCrew(password: string): Promise<void> {
+    const crew = this.state.crew
+    if (!crew) return
+    const { data, error } = await this.sb.rpc('delete_crew', { p_name: crew.name, p_password: password })
+    if (error) throw new Error(humanize(error.message))
+    if (!data) throw new Error('Wrong crew password — nothing deleted')
+    await this.leaveCrew()
   }
 
   async createProfile(input: NewProfile): Promise<void> {
@@ -200,6 +213,15 @@ export class SupabaseStore extends BaseStore {
         ? { lat: point.lat, lng: point.lng, accuracy: point.accuracy ?? null, loc_at: new Date(point.at).toISOString() }
         : { lat: null, lng: null, accuracy: null, loc_at: null }
     )
+  }
+
+  async setStatus(text: string): Promise<void> {
+    const t = text.trim()
+    await this.patchMe({
+      status: t || null,
+      status_at: t ? new Date().toISOString() : null,
+      last_check_in: new Date().toISOString()
+    })
   }
 
   async setMixWarnings(on: boolean): Promise<void> {

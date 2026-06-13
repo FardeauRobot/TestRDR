@@ -22,8 +22,8 @@ function seed(): Bucket {
   const min = 60_000
   return {
     members: [
-      { id: 'm-robin', name: 'Robin', emoji: '🦊', color: '#f59e0b', isAdmin: false, mixWarnings: true, lastCheckIn: now - 5 * min, sos: false, location: near(0.001, 0.0012, now - 4 * min), updatedAt: now },
-      { id: 'm-sasha', name: 'Sasha', emoji: '🐙', color: '#38bdf8', isAdmin: false, mixWarnings: true, lastCheckIn: now - 60 * min, sos: false, location: near(-0.0014, 0.0009, now - 60 * min), updatedAt: now },
+      { id: 'm-robin', name: 'Robin', emoji: '🦊', color: '#f59e0b', isAdmin: false, mixWarnings: true, lastCheckIn: now - 5 * min, status: 'At the main stage 🎶', statusAt: now - 5 * min, sos: false, location: near(0.001, 0.0012, now - 4 * min), updatedAt: now },
+      { id: 'm-sasha', name: 'Sasha', emoji: '🐙', color: '#38bdf8', isAdmin: false, mixWarnings: true, lastCheckIn: now - 60 * min, status: 'Resting in the shade', statusAt: now - 40 * min, sos: false, location: near(-0.0014, 0.0009, now - 60 * min), updatedAt: now },
       { id: 'm-max', name: 'Max', emoji: '🐺', color: '#a78bfa', isAdmin: false, mixWarnings: true, lastCheckIn: now - 2 * min, sos: false, location: near(0.0006, -0.0011, now - 2 * min), updatedAt: now },
       { id: 'm-lou', name: 'Lou', emoji: '🦉', color: '#34d399', isAdmin: false, mixWarnings: true, lastCheckIn: now - 8 * min, sos: false, updatedAt: now }
     ],
@@ -115,6 +115,13 @@ export class DemoStore extends BaseStore {
     this.set({ crew: null, meId: null })
   }
 
+  async deleteCrew(_password: string): Promise<void> {
+    this.bucket = { members: [], events: [] }
+    this.persist()
+    localStorage.removeItem(CREW_KEY)
+    this.set({ crew: null, meId: null, members: [], events: [] })
+  }
+
   async createProfile(input: NewProfile): Promise<void> {
     const crew = this.state.crew
     if (!crew) return
@@ -160,6 +167,12 @@ export class DemoStore extends BaseStore {
 
   async updateLocation(point: GeoPoint | null): Promise<void> {
     this.patchMe((m) => ({ ...m, location: point ?? undefined, updatedAt: Date.now() }))
+  }
+
+  async setStatus(text: string): Promise<void> {
+    const now = Date.now()
+    const t = text.trim()
+    this.patchMe((m) => ({ ...m, status: t || undefined, statusAt: t ? now : undefined, lastCheckIn: now }))
   }
 
   async setMixWarnings(on: boolean): Promise<void> {

@@ -1,6 +1,7 @@
 import { useCrew, useStore } from '../store/context'
 import { useNow } from '../lib/useNow'
 import { MemberCard } from '../components/MemberCard'
+import { StatusEditor } from '../components/StatusEditor'
 import { memberStatus, type Tone } from '../lib/status'
 import { formatAgo } from '../lib/util'
 
@@ -52,6 +53,7 @@ export function CrewScreen({ onLog, onOpen }: { onLog: () => void; onOpen: (id: 
               </button>
             )}
           </div>
+          <StatusEditor />
           <div className="what" style={{ marginTop: 8, textAlign: 'center' }}>
             Last check-in {formatAgo(me.lastCheckIn, now)}
           </div>

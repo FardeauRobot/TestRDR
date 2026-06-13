@@ -1,7 +1,7 @@
 import type { ConsumptionEvent, Member } from '../types'
 import { Avatar } from './Avatar'
 import { activeDoses, doseTimers, memberStatus, mixAlert, type DoseTimer } from '../lib/status'
-import { cx, formatElapsed } from '../lib/util'
+import { cx, formatAgo, formatElapsed } from '../lib/util'
 
 const DOWNERS = new Set(['Depressant', 'Opioid'])
 
@@ -72,6 +72,13 @@ export function MemberCard({
           <div className={cx('mix-line', mix.level)}>
             <span>{mix.level === 'danger' ? '⚠️' : '🔀'}</span>
             <span>{mix.text}</span>
+          </div>
+        )}
+        {member.status && (
+          <div className="statusline">
+            <span className="q">📣</span>
+            <span className="txt">{member.status}</span>
+            {member.statusAt && <span className="when">{formatAgo(member.statusAt, now)}</span>}
           </div>
         )}
       </div>

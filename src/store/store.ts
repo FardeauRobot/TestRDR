@@ -39,6 +39,8 @@ export interface CrewStore {
   joinCrew(name: string, password: string): Promise<void>
   /** Leave the crew on this device (forgets crew + profile here). */
   leaveCrew(): Promise<void>
+  /** Admin: permanently delete the whole crew (re-checks the crew password). */
+  deleteCrew(password: string): Promise<void>
 
   /** Create this device's profile (within the current crew) and become `meId`. */
   createProfile(input: NewProfile): Promise<void>
@@ -47,6 +49,8 @@ export interface CrewStore {
   checkIn(): Promise<void>
   setSos(on: boolean): Promise<void>
   updateLocation(point: GeoPoint | null): Promise<void>
+  /** Set this member's current status note (empty string clears it). */
+  setStatus(text: string): Promise<void>
   /** Toggle the pre-log risky-combination disclaimer for this member. */
   setMixWarnings(on: boolean): Promise<void>
 
@@ -84,12 +88,14 @@ export abstract class BaseStore implements CrewStore {
   abstract createCrew(name: string, password: string): Promise<void>
   abstract joinCrew(name: string, password: string): Promise<void>
   abstract leaveCrew(): Promise<void>
+  abstract deleteCrew(password: string): Promise<void>
   abstract createProfile(input: NewProfile): Promise<void>
   abstract updateProfile(patch: Partial<NewProfile>): Promise<void>
   abstract logConsumption(input: NewConsumption): Promise<void>
   abstract checkIn(): Promise<void>
   abstract setSos(on: boolean): Promise<void>
   abstract updateLocation(point: GeoPoint | null): Promise<void>
+  abstract setStatus(text: string): Promise<void>
   abstract setMixWarnings(on: boolean): Promise<void>
   abstract removeMember(memberId: ID): Promise<void>
   abstract clearMemberSos(memberId: ID): Promise<void>

@@ -65,6 +65,14 @@ export function MemberDetail({ id, onBack }: { id: string; onBack: () => void })
         </div>
       )}
 
+      {member.status && (
+        <div className="statusline" style={{ marginTop: 10 }}>
+          <span className="q">📣</span>
+          <span className="txt">{member.status}</span>
+          {member.statusAt && <span className="when">{formatAgo(member.statusAt, now)}</span>}
+        </div>
+      )}
+
       {mix && (
         <div className={cx('banner', mix.level === 'danger' ? 'warn' : 'info')} style={{ marginTop: 10 }}>
           <span>{mix.level === 'danger' ? '⚠️' : '🔀'}</span>

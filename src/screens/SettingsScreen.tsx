@@ -16,8 +16,25 @@ export function SettingsScreen() {
   const me = members.find((m) => m.id === meId)
   const [editing, setEditing] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [delOpen, setDelOpen] = useState(false)
+  const [delPwd, setDelPwd] = useState('')
+  const [delErr, setDelErr] = useState<string | null>(null)
+  const [delBusy, setDelBusy] = useState(false)
 
   if (!me) return null
+
+  async function deleteCrew() {
+    setDelErr(null)
+    setDelBusy(true)
+    try {
+      await store.deleteCrew(delPwd)
+      // On success the store clears the crew → app returns to the gate.
+    } catch (e) {
+      setDelErr(e instanceof Error ? e.message : 'Could not delete crew')
+    } finally {
+      setDelBusy(false)
+    }
+  }
 
   async function invite() {
     if (!crew) return
@@ -124,6 +141,46 @@ export function SettingsScreen() {
       <button className="btn ghost" style={{ marginTop: 16, color: 'var(--sos)' }} onClick={() => void store.leaveCrew()}>
         Leave crew on this device
       </button>
+
+      {me.isAdmin && (
+        <>
+          {!delOpen ? (
+            <button className="btn ghost" style={{ marginTop: 10, color: 'var(--sos)' }} onClick={() => setDelOpen(true)}>
+              🗑️ Delete crew for everyone
+            </button>
+          ) : (
+            <div className="card" style={{ marginTop: 10, borderColor: 'rgba(239,68,68,0.4)' }}>
+              <div style={{ fontWeight: 700, color: 'var(--sos)' }}>Delete “{crew?.name}” permanently?</div>
+              <div className="what" style={{ marginTop: 6, lineHeight: 1.4 }}>
+                This removes the crew and <strong>everyone's</strong> profiles and logs. It can't be undone.
+                Enter the crew password to confirm.
+              </div>
+              <input
+                className="input"
+                type="password"
+                value={delPwd}
+                placeholder="crew password"
+                style={{ marginTop: 10 }}
+                onChange={(e) => setDelPwd(e.target.value)}
+              />
+              {delErr && (
+                <div className="banner warn" style={{ marginTop: 10 }}>
+                  <span>⚠️</span>
+                  <span>{delErr}</span>
+                </div>
+              )}
+              <div className="btn-row" style={{ marginTop: 12 }}>
+                <button className="btn ghost" onClick={() => { setDelOpen(false); setDelPwd(''); setDelErr(null) }}>
+                  Cancel
+                </button>
+                <button className="btn danger" disabled={delBusy || !delPwd} onClick={() => void deleteCrew()}>
+                  {delBusy ? 'Deleting…' : 'Delete forever'}
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
 
       <div className="disclaimer">
         Crew Watch helps you look out for each other — it doesn't replace good judgement, naloxone,

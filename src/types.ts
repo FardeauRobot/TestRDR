@@ -12,6 +12,10 @@ export interface Member {
   mixWarnings: boolean
   /** Last time this member tapped "I'm OK" (ms epoch). */
   lastCheckIn: number
+  /** Current free-text status / whereabouts, e.g. "heading back to camp". */
+  status?: string
+  /** When the status was set (ms epoch). */
+  statusAt?: number
   /** Whether the member is actively broadcasting an SOS. */
   sos: boolean
   /** Last known location, if location sharing is on. */

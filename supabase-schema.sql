@@ -26,6 +26,8 @@ create table if not exists public.profiles (
   color         text not null,
   is_admin      boolean not null default false,
   mix_warnings  boolean not null default true,
+  status        text,
+  status_at     timestamptz,
   last_check_in timestamptz not null default now(),
   sos           boolean not null default false,
   lat           double precision,
@@ -49,6 +51,8 @@ create table if not exists public.events (
 -- Safe to re-run on an existing database (adds new columns if missing).
 alter table public.profiles add column if not exists is_admin     boolean not null default false;
 alter table public.profiles add column if not exists mix_warnings boolean not null default true;
+alter table public.profiles add column if not exists status       text;
+alter table public.profiles add column if not exists status_at    timestamptz;
 
 create index if not exists events_crew_at_idx on public.events (crew_id, at desc);
 create index if not exists profiles_crew_idx on public.profiles (crew_id);
@@ -93,10 +97,25 @@ begin
   -- No match → empty result; the app shows "wrong name or password".
 end; $$;
 
+-- Admin: delete a crew (re-checks the password); cascades to profiles + events.
+create or replace function public.delete_crew(p_name text, p_password text)
+returns integer
+language plpgsql security definer set search_path = public, extensions as $$
+declare deleted integer;
+begin
+  delete from public.crews c
+   where lower(c.name) = lower(trim(p_name))
+     and c.password_hash = crypt(p_password, c.password_hash);
+  get diagnostics deleted = row_count;
+  return deleted;  -- 0 → wrong name/password, nothing deleted
+end; $$;
+
 revoke all on function public.create_crew(text, text) from public;
 revoke all on function public.join_crew(text, text) from public;
+revoke all on function public.delete_crew(text, text) from public;
 grant execute on function public.create_crew(text, text) to anon, authenticated;
 grant execute on function public.join_crew(text, text)  to anon, authenticated;
+grant execute on function public.delete_crew(text, text) to anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Realtime + Row Level Security.

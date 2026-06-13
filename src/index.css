@@ -208,6 +208,23 @@ input, select, textarea { font: inherit; }
   font-size: 18px; flex: 0 0 auto;
 }
 
+/* ---------- Status note ---------- */
+.statusline {
+  display: flex; align-items: baseline; gap: 6px; margin-top: 7px;
+  font-size: 13px; line-height: 1.35;
+  padding: 7px 10px; border-radius: var(--radius-sm);
+  background: rgba(124, 92, 255, 0.12);
+  border: 1px solid rgba(124, 92, 255, 0.28);
+}
+.statusline .q { color: var(--accent); flex: 0 0 auto; }
+.statusline .txt { color: var(--text); }
+.statusline .when { color: var(--muted); font-size: 11px; margin-left: auto; flex: 0 0 auto; white-space: nowrap; }
+.status-chip {
+  border: 1px solid var(--border); background: var(--surface-2);
+  border-radius: 999px; padding: 8px 12px; font-size: 13px; color: var(--text);
+}
+.status-chip:active { transform: scale(0.97); }
+
 /* ---------- Risk pill (interaction labels) ---------- */
 .risk-pill {
   font-size: 11px; font-weight: 700; white-space: nowrap;
