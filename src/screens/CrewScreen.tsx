@@ -43,13 +43,6 @@ export function CrewScreen({ onLog, onOpen }: { onLog: () => void; onOpen: (id: 
               ✅ I'm OK
             </button>
             <button className="btn" onClick={onLog}>➕ Log</button>
-            {me.sos ? (
-              <button className="btn danger" onClick={() => void store.setSos(false)}>Clear SOS</button>
-            ) : (
-              <button className="btn ghost" style={{ color: 'var(--sos)' }} onClick={() => void store.setSos(true)}>
-                SOS
-              </button>
-            )}
           </div>
           <StatusEditor />
           <div className="what" style={{ marginTop: 8, textAlign: 'center' }}>

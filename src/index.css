@@ -68,6 +68,82 @@ input, select, textarea { font: inherit; }
   padding: 4px 16px calc(var(--tabbar-h) + var(--safe-bottom) + 24px);
 }
 
+/* ---------- Swipe pager ---------- */
+/* The viewport (embla) carries no padding; each slide does, so slides page
+ *  edge-to-edge while content keeps its gutter. align-items:flex-start keeps
+ *  each slide its natural height (the track is as tall as the tallest slide). */
+.main.pager { padding: 0; overflow: hidden; }
+.pager-track { display: flex; align-items: flex-start; }
+.pager-slide {
+  flex: 0 0 100%;
+  min-width: 0;
+  padding: 4px 16px calc(var(--tabbar-h) + var(--safe-bottom) + 24px);
+}
+
+/* ---------- Full-screen overlay (member detail, combos) ---------- */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 22;            /* over the sticky header (20), under tabbar (30) + SOS (25) */
+  max-width: 540px;
+  margin: 0 auto;
+  background: var(--bg);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: calc(var(--safe-top) + 14px) 16px calc(var(--tabbar-h) + var(--safe-bottom) + 24px);
+}
+
+/* ---------- Persistent hold-to-activate SOS ---------- */
+.sos-fab {
+  position: fixed;
+  right: 16px;
+  bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 16px);
+  z-index: 25;
+  width: 66px;
+  height: 66px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 2px solid var(--sos);
+  color: var(--sos);
+  display: grid;
+  place-items: center;
+  gap: 0;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+.sos-fab .ic { font-size: 22px; line-height: 1; position: relative; z-index: 1; }
+.sos-fab .hint {
+  font-size: 9px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;
+  position: relative; z-index: 1; margin-top: 2px;
+}
+/* Fill grows bottom→top while held; removing the class resets it instantly. */
+.sos-fab-fill {
+  position: absolute; inset: 0; background: var(--sos);
+  transform: scaleY(0); transform-origin: bottom; z-index: 0;
+}
+.sos-fab.holding { color: #fff; }
+.sos-fab.holding .sos-fab-fill { animation: sosfill 0.8s linear forwards; }
+@keyframes sosfill { to { transform: scaleY(1); } }
+.sos-fab.active {
+  background: var(--sos); color: #fff; border-color: transparent;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+/* ---------- Quick-log recents ---------- */
+.recents-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.recent-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 999px; padding: 9px 14px; font-size: 14px; font-weight: 600;
+}
+.recent-chip .emoji { font-size: 18px; }
+.recent-chip:active { transform: scale(0.96); }
+.recent-chip:disabled { opacity: 0.5; }
+
 .mode-pill {
   font-size: 11px;
   padding: 4px 9px;

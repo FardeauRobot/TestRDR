@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import type { Member } from '../types'
-import { useCrew, useMe, useStore } from '../store/context'
+import { useCrew, useStore } from '../store/context'
 import { useNow } from '../lib/useNow'
 import { formatAgo } from '../lib/util'
 
@@ -42,7 +42,6 @@ export function MapScreen() {
   const [error, setError] = useState<string | null>(null)
   const watchId = useRef<number | null>(null)
 
-  const me = useMe()
   const located = members.filter((m) => m.location)
   const points = located.map((m) => [m.location!.lat, m.location!.lng] as [number, number])
   const center = points[0] ?? FALLBACK
@@ -52,26 +51,6 @@ export function MapScreen() {
       if (watchId.current != null) navigator.geolocation.clearWatch(watchId.current)
     }
   }, [])
-
-  function shareOnce() {
-    setError(null)
-    if (!('geolocation' in navigator)) {
-      setError('This device has no location support.')
-      return
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        void store.updateLocation({
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          accuracy: pos.coords.accuracy,
-          at: Date.now()
-        })
-      },
-      (err) => setError(geoError(err)),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-    )
-  }
 
   function toggleLive() {
     if (sharing) {
@@ -115,7 +94,7 @@ export function MapScreen() {
         </div>
       )}
 
-      <div className="map-wrap">
+      <div className="map-wrap" data-no-swipe>
         <MapContainer center={center} zoom={14} scrollWheelZoom style={{ height: '100%' }}>
           <TileLayer
             url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
@@ -139,22 +118,6 @@ export function MapScreen() {
           <button className="btn primary" onClick={toggleLive}>
             {sharing ? '🟢 Sharing live — stop' : '📍 Share my location'}
           </button>
-          {me && (me.sos ? (
-            <button className="btn danger" style={{ flex: '0 0 auto', width: 'auto' }} onClick={() => void store.setSos(false)}>
-              Clear SOS
-            </button>
-          ) : (
-            <button
-              className="btn"
-              style={{ flex: '0 0 auto', width: 'auto', color: 'var(--sos)' }}
-              onClick={() => {
-                void store.setSos(true)
-                shareOnce()
-              }}
-            >
-              🆘
-            </button>
-          ))}
         </div>
       </div>
 

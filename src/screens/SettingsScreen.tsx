@@ -8,7 +8,7 @@ import { AVATAR_COLORS, AVATAR_EMOJIS } from '../lib/avatar'
 import { useNow } from '../lib/useNow'
 import { formatAgo, cx } from '../lib/util'
 
-export function SettingsScreen() {
+export function SettingsScreen({ onCombos }: { onCombos: () => void }) {
   const { crew, events } = useCrew()
   const store = useStore()
   const now = useNow(10000)
@@ -114,6 +114,9 @@ export function SettingsScreen() {
             <span />
           </button>
         </div>
+        <button className="btn ghost" style={{ marginTop: 12 }} onClick={onCombos}>
+          🧪 Interaction chart
+        </button>
       </div>
 
       <div className="section-title">Crew</div>
