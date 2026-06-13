@@ -2,7 +2,9 @@
 -- Paste into the Supabase dashboard → SQL Editor → Run.
 -- Creates the tables, secure create/join functions, and realtime sync.
 
-create extension if not exists "pgcrypto";
+-- pgcrypto provides crypt()/gen_salt(); on Supabase it lives in the
+-- "extensions" schema (referenced via the search_path on the functions below).
+create extension if not exists pgcrypto with schema extensions;
 
 -- A crew, gated by a name + bcrypt-hashed password.
 create table if not exists public.crews (
@@ -59,7 +61,7 @@ create index if not exists profiles_crew_idx on public.profiles (crew_id);
 
 create or replace function public.create_crew(p_name text, p_password text)
 returns table(id uuid, name text)
-language plpgsql security definer set search_path = public as $$
+language plpgsql security definer set search_path = public, extensions as $$
 declare new_id uuid;
 begin
   if length(coalesce(trim(p_name), '')) < 2 then
@@ -82,7 +84,7 @@ end; $$;
 
 create or replace function public.join_crew(p_name text, p_password text)
 returns table(id uuid, name text)
-language plpgsql security definer set search_path = public as $$
+language plpgsql security definer set search_path = public, extensions as $$
 begin
   return query
     select c.id, c.name from public.crews c
