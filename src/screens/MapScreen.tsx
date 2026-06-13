@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import type { Member } from '../types'
-import { useCrew, useStore } from '../store/context'
+import { useCrew, useMe, useStore } from '../store/context'
 import { useNow } from '../lib/useNow'
 import { formatAgo } from '../lib/util'
 
@@ -42,7 +42,7 @@ export function MapScreen() {
   const [error, setError] = useState<string | null>(null)
   const watchId = useRef<number | null>(null)
 
-  const me = members.find((m) => m.id === meId)
+  const me = useMe()
   const located = members.filter((m) => m.location)
   const points = located.map((m) => [m.location!.lat, m.location!.lng] as [number, number])
   const center = points[0] ?? FALLBACK

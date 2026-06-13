@@ -1,14 +1,14 @@
 import { useState } from 'react'
-import { useCrew, useStore } from '../store/context'
+import { useCrew, useMe, useStore } from '../store/context'
 import { SUBSTANCES, getSubstance, DISCLAIMER } from '../lib/substances'
 import { activeDoses, checkRedose, comboRisks } from '../lib/status'
 import { RISK_META } from '../lib/interactions'
 import { cx } from '../lib/util'
 
 export function LogScreen({ onDone }: { onDone: () => void }) {
-  const { members, events, meId } = useCrew()
+  const { events, meId } = useCrew()
   const store = useStore()
-  const me = members.find((m) => m.id === meId)
+  const me = useMe()
   const [substanceId, setSubstanceId] = useState<string | null>(null)
   const [dose, setDose] = useState('')
   const [note, setNote] = useState('')

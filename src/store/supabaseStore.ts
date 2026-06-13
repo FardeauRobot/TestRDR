@@ -1,9 +1,7 @@
 import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js'
-import type { ConsumptionEvent, GeoPoint, Member } from '../types'
+import type { ConsumptionEvent, Member, GeoPoint } from '../types'
 import { BaseStore, type Crew, type NewConsumption, type NewProfile } from './store'
-
-const CREW_KEY = 'crewwatch.crew.v1'
-const meKey = (crewId: string) => `crewwatch.me.${crewId}`
+import { CREW_KEY, loadCrew, meKey } from './persist'
 
 interface ProfileRow {
   id: string
@@ -52,6 +50,30 @@ function toMember(r: ProfileRow): Member {
   }
 }
 
+/** Inverse of `toMember`: a camelCase member patch → a snake_case profile-row patch.
+ *  Only keys present in `patch` are written, so callers speak domain types and the
+ *  column-name knowledge lives in exactly one place. */
+function toRow(patch: Partial<Member>): Record<string, unknown> {
+  const row: Record<string, unknown> = {}
+  if ('name' in patch) row.name = patch.name
+  if ('emoji' in patch) row.emoji = patch.emoji
+  if ('color' in patch) row.color = patch.color
+  if ('isAdmin' in patch) row.is_admin = patch.isAdmin
+  if ('mixWarnings' in patch) row.mix_warnings = patch.mixWarnings
+  if ('status' in patch) row.status = patch.status ?? null
+  if ('statusAt' in patch) row.status_at = patch.statusAt ? new Date(patch.statusAt).toISOString() : null
+  if ('lastCheckIn' in patch) row.last_check_in = new Date(patch.lastCheckIn as number).toISOString()
+  if ('sos' in patch) row.sos = patch.sos
+  if ('location' in patch) {
+    const loc = patch.location
+    row.lat = loc?.lat ?? null
+    row.lng = loc?.lng ?? null
+    row.accuracy = loc?.accuracy ?? null
+    row.loc_at = loc ? new Date(loc.at).toISOString() : null
+  }
+  return row
+}
+
 function toEvent(r: EventRow): ConsumptionEvent {
   return {
     id: r.id,
@@ -68,8 +90,6 @@ export class SupabaseStore extends BaseStore {
   readonly mode = 'synced' as const
   private sb: SupabaseClient
   private channel: RealtimeChannel | null = null
-  /** True between creating a crew and making the creator's profile (→ admin). */
-  private pendingAdmin = false
 
   constructor(client: SupabaseClient) {
     super()
@@ -78,22 +98,13 @@ export class SupabaseStore extends BaseStore {
   }
 
   private async boot(): Promise<void> {
-    const crew = this.loadCrew()
+    const crew = loadCrew()
     if (crew) {
       const meId = localStorage.getItem(meKey(crew.id))
       this.set({ crew, meId })
       await this.enter(crew)
     }
     this.set({ ready: true })
-  }
-
-  private loadCrew(): Crew | null {
-    try {
-      const raw = localStorage.getItem(CREW_KEY)
-      return raw ? (JSON.parse(raw) as Crew) : null
-    } catch {
-      return null
-    }
   }
 
   /** Fetch a crew's data and subscribe to live changes. */
@@ -117,12 +128,14 @@ export class SupabaseStore extends BaseStore {
   private async refetch(crewId: string): Promise<void> {
     const [{ data: profiles }, { data: events }] = await Promise.all([
       this.sb.from('profiles').select('*').eq('crew_id', crewId),
+      // NOTE: 500-event cap is a known boundary — a long-lived crew exceeding it
+      // will drop its oldest logs from timers/history. Paginate/scope by time if hit.
       this.sb.from('events').select('*').eq('crew_id', crewId).order('at', { ascending: false }).limit(500)
     ])
-    const members = (profiles ?? []).map(toMember)
+    const members = ((profiles ?? []) as ProfileRow[]).map(toMember)
     // If our own profile vanished (removed by an admin, or crew deleted), drop meId.
     const meId = this.state.meId && members.some((m) => m.id === this.state.meId) ? this.state.meId : null
-    this.set({ members, events: (events ?? []).map(toEvent), meId })
+    this.set({ members, events: ((events ?? []) as EventRow[]).map(toEvent), meId })
   }
 
   async createCrew(name: string, password: string): Promise<void> {
@@ -168,17 +181,25 @@ export class SupabaseStore extends BaseStore {
       .from('profiles')
       .insert({ crew_id: crew.id, name: input.name, emoji: input.emoji, color: input.color, is_admin: this.pendingAdmin })
       .select()
-      .single()
+      .single<ProfileRow>()
     if (error || !data) throw error ?? new Error('Could not create profile')
     this.pendingAdmin = false
     localStorage.setItem(meKey(crew.id), data.id)
     this.set({ meId: data.id, members: [...this.state.members, toMember(data)] })
   }
 
-  private async patchMe(patch: Record<string, unknown>): Promise<void> {
-    const { meId, crew } = this.state
-    if (!meId || !crew) return
-    await this.sb.from('profiles').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', meId)
+  /** Patch this device's own profile. Takes a camelCase domain patch. */
+  private async patchMe(patch: Partial<Member>): Promise<void> {
+    const { meId } = this.state
+    if (!meId) return
+    await this.patchMember(meId, patch)
+  }
+
+  /** Patch any member's profile (admin paths gate this in the UI). */
+  private async patchMember(memberId: string, patch: Partial<Member>): Promise<void> {
+    const crew = this.state.crew
+    if (!crew) return
+    await this.sb.from('profiles').update({ ...toRow(patch), updated_at: new Date().toISOString() }).eq('id', memberId)
     await this.refetch(crew.id)
   }
 
@@ -196,36 +217,29 @@ export class SupabaseStore extends BaseStore {
       dose: input.dose ?? null,
       note: input.note ?? null
     })
-    await this.patchMe({ last_check_in: new Date().toISOString() })
+    await this.patchMe({ lastCheckIn: Date.now() }) // logging counts as a check-in
   }
 
   async checkIn(): Promise<void> {
-    await this.patchMe({ last_check_in: new Date().toISOString(), sos: false })
+    await this.patchMe({ lastCheckIn: Date.now(), sos: false })
   }
 
   async setSos(on: boolean): Promise<void> {
-    await this.patchMe({ sos: on, last_check_in: new Date().toISOString() })
+    await this.patchMe({ sos: on, lastCheckIn: Date.now() })
   }
 
   async updateLocation(point: GeoPoint | null): Promise<void> {
-    await this.patchMe(
-      point
-        ? { lat: point.lat, lng: point.lng, accuracy: point.accuracy ?? null, loc_at: new Date(point.at).toISOString() }
-        : { lat: null, lng: null, accuracy: null, loc_at: null }
-    )
+    await this.patchMe({ location: point ?? undefined })
   }
 
   async setStatus(text: string): Promise<void> {
+    const now = Date.now()
     const t = text.trim()
-    await this.patchMe({
-      status: t || null,
-      status_at: t ? new Date().toISOString() : null,
-      last_check_in: new Date().toISOString()
-    })
+    await this.patchMe({ status: t || undefined, statusAt: t ? now : undefined, lastCheckIn: now })
   }
 
   async setMixWarnings(on: boolean): Promise<void> {
-    await this.patchMe({ mix_warnings: on })
+    await this.patchMe({ mixWarnings: on })
   }
 
   async removeMember(memberId: string): Promise<void> {
@@ -236,13 +250,7 @@ export class SupabaseStore extends BaseStore {
   }
 
   async clearMemberSos(memberId: string): Promise<void> {
-    const crew = this.state.crew
-    if (!crew) return
-    await this.sb
-      .from('profiles')
-      .update({ sos: false, last_check_in: new Date().toISOString(), updated_at: new Date().toISOString() })
-      .eq('id', memberId)
-    await this.refetch(crew.id)
+    await this.patchMember(memberId, { sos: false, lastCheckIn: Date.now() })
   }
 }
 

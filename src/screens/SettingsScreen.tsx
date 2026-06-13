@@ -1,19 +1,18 @@
 import { useState } from 'react'
-import { useCrew, useStore } from '../store/context'
+import { useCrew, useMe, useStore } from '../store/context'
 import { Avatar } from '../components/Avatar'
 import { SYNC_ENABLED } from '../lib/supabase'
 import { getSubstance } from '../lib/substances'
+import { eventsFor } from '../lib/status'
+import { AVATAR_COLORS, AVATAR_EMOJIS } from '../lib/avatar'
 import { useNow } from '../lib/useNow'
 import { formatAgo, cx } from '../lib/util'
 
-const EMOJIS = ['🦊', '🐙', '🐺', '🦉', '🐬', '🦋', '🐝', '🦎', '🐲', '🦅', '🐱', '🦄']
-const COLORS = ['#f59e0b', '#38bdf8', '#a78bfa', '#34d399', '#f472b6', '#fb7185', '#22d3ee', '#facc15']
-
 export function SettingsScreen() {
-  const { crew, members, events, meId } = useCrew()
+  const { crew, events } = useCrew()
   const store = useStore()
   const now = useNow(10000)
-  const me = members.find((m) => m.id === meId)
+  const me = useMe()
   const [editing, setEditing] = useState(false)
   const [copied, setCopied] = useState(false)
   const [delOpen, setDelOpen] = useState(false)
@@ -53,7 +52,7 @@ export function SettingsScreen() {
     }
   }
 
-  const myEvents = events.filter((e) => e.memberId === meId).sort((a, b) => b.at - a.at).slice(0, 8)
+  const myEvents = eventsFor(me.id, events).slice(0, 8)
 
   return (
     <>
@@ -191,9 +190,8 @@ export function SettingsScreen() {
 }
 
 function EditProfile() {
-  const { members, meId } = useCrew()
   const store = useStore()
-  const me = members.find((m) => m.id === meId)!
+  const me = useMe()!
   const [name, setName] = useState(me.name)
 
   return (
@@ -211,7 +209,7 @@ function EditProfile() {
       <div className="field">
         <label>Avatar</label>
         <div className="chip-row">
-          {EMOJIS.map((em) => (
+          {AVATAR_EMOJIS.map((em) => (
             <button key={em} className={cx('chip', em === me.emoji && 'selected')} onClick={() => void store.updateProfile({ emoji: em })}>
               {em}
             </button>
@@ -221,7 +219,7 @@ function EditProfile() {
       <div className="field">
         <label>Colour</label>
         <div className="chip-row">
-          {COLORS.map((c) => (
+          {AVATAR_COLORS.map((c) => (
             <button key={c} className={cx('swatch', c === me.color && 'selected')} style={{ background: c }} onClick={() => void store.updateProfile({ color: c })} aria-label={c} />
           ))}
         </div>

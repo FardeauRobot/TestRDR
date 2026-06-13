@@ -48,3 +48,11 @@ export const SUBSTANCE_BY_ID: Record<string, Substance> = Object.fromEntries(
 export function getSubstance(id: string): Substance {
   return SUBSTANCE_BY_ID[id] ?? SUBSTANCE_BY_ID['other']
 }
+
+/** Sedating categories given a "downer" visual cue on timer chips. One source of
+ *  truth so the cards and detail view never classify differently. (Whether to add
+ *  'Dissociative' here is an open product question — see docs/04-domain-logic.md.) */
+export const DOWNER_CATEGORIES: ReadonlySet<Substance['category']> = new Set(['Depressant', 'Opioid'])
+export function isDowner(category: Substance['category']): boolean {
+  return DOWNER_CATEGORIES.has(category)
+}

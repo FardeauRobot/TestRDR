@@ -66,6 +66,9 @@ export abstract class BaseStore implements CrewStore {
   abstract readonly mode: 'demo' | 'synced'
   protected state: CrewState = { crew: null, members: [], events: [], meId: null, ready: false }
   private listeners = new Set<() => void>()
+  /** True between creating a crew and making the creator's profile (→ admin).
+   *  Lives here so both stores share one definition of the flag's lifecycle. */
+  protected pendingAdmin = false
 
   getState(): CrewState {
     return this.state

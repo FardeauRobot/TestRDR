@@ -4,7 +4,7 @@
  * Ratings are general guidance, not a guarantee of safety. Doses, individual
  * physiology and timing all matter.
  */
-import { SUBSTANCES, getSubstance, type Substance } from './substances'
+import { SUBSTANCES, type Substance } from './substances'
 
 export type RiskLevel = 'dangerous' | 'unsafe' | 'caution' | 'synergy' | 'neutral' | 'decrease' | 'unknown'
 
@@ -120,5 +120,3 @@ export function chartFor(substanceId: string): ChartEntry[] {
     .map((s) => ({ other: s, level: interaction(substanceId, s.id) }))
     .sort((x, y) => RISK_META[y.level].severity - RISK_META[x.level].severity)
 }
-
-export { getSubstance }

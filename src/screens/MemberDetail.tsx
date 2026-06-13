@@ -1,9 +1,9 @@
 import { useEffect } from 'react'
-import { useCrew, useStore } from '../store/context'
+import { useCrew, useMe, useMember, useStore } from '../store/context'
 import { useNow } from '../lib/useNow'
 import { Avatar } from '../components/Avatar'
-import { doseTimers, memberStatus, mixAlert } from '../lib/status'
-import { getSubstance } from '../lib/substances'
+import { doseTimers, eventsFor, memberStatus, mixAlert } from '../lib/status'
+import { getSubstance, isDowner } from '../lib/substances'
 import { cx, formatAgo, formatElapsed, minutesSince } from '../lib/util'
 
 const TONE_VAR: Record<string, string> = {
@@ -15,12 +15,12 @@ function clockTime(at: number): string {
 }
 
 export function MemberDetail({ id, onBack }: { id: string; onBack: () => void }) {
-  const { members, events, meId } = useCrew()
+  const { events, meId } = useCrew()
   const store = useStore()
   const now = useNow(1000)
 
-  const member = members.find((m) => m.id === id)
-  const me = members.find((m) => m.id === meId)
+  const member = useMember(id)
+  const me = useMe()
 
   // If this member was removed while open, bail back to the list.
   useEffect(() => {
@@ -31,7 +31,7 @@ export function MemberDetail({ id, onBack }: { id: string; onBack: () => void })
   const status = memberStatus(member, events, now)
   const timers = doseTimers(member.id, events, now)
   const mix = mixAlert(timers.filter((d) => d.active))
-  const history = events.filter((e) => e.memberId === member.id).sort((a, b) => b.at - a.at)
+  const history = eventsFor(member.id, events)
   const canAdmin = !!me?.isAdmin && member.id !== meId
 
   async function remove() {
@@ -98,7 +98,7 @@ export function MemberDetail({ id, onBack }: { id: string; onBack: () => void })
       ) : (
         timers.map((d) => {
           const pct = Math.min(1, minutesSince(d.lastAt, now) / d.substance.durationMins)
-          const tone = d.active ? (mix?.level === 'danger' && ['Depressant', 'Opioid'].includes(d.substance.category) ? 'sos' : 'active') : 'idle'
+          const tone = d.active ? (mix?.level === 'danger' && isDowner(d.substance.category) ? 'sos' : 'active') : 'idle'
           return (
             <div key={d.substance.id} className="card">
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

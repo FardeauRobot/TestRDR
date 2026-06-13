@@ -1,17 +1,15 @@
 import { useState } from 'react'
 import { useCrew, useStore } from '../store/context'
 import { cx } from '../lib/util'
+import { AVATAR_COLORS, AVATAR_EMOJIS } from '../lib/avatar'
 import { SYNC_ENABLED } from '../lib/supabase'
-
-const EMOJIS = ['🦊', '🐙', '🐺', '🦉', '🐬', '🦋', '🐝', '🦎', '🐲', '🦅', '🐱', '🦄']
-const COLORS = ['#f59e0b', '#38bdf8', '#a78bfa', '#34d399', '#f472b6', '#fb7185', '#22d3ee', '#facc15']
 
 export function Onboarding() {
   const store = useStore()
   const { crew } = useCrew()
   const [name, setName] = useState('')
-  const [emoji, setEmoji] = useState(EMOJIS[0])
-  const [color, setColor] = useState(COLORS[0])
+  const [emoji, setEmoji] = useState(AVATAR_EMOJIS[0])
+  const [color, setColor] = useState(AVATAR_COLORS[0])
   const [busy, setBusy] = useState(false)
 
   async function submit() {
@@ -59,7 +57,7 @@ export function Onboarding() {
         <div className="field">
           <label>Pick an avatar</label>
           <div className="chip-row">
-            {EMOJIS.map((e) => (
+            {AVATAR_EMOJIS.map((e) => (
               <button key={e} className={cx('chip', e === emoji && 'selected')} onClick={() => setEmoji(e)}>
                 {e}
               </button>
@@ -70,7 +68,7 @@ export function Onboarding() {
         <div className="field">
           <label>Colour</label>
           <div className="chip-row">
-            {COLORS.map((c) => (
+            {AVATAR_COLORS.map((c) => (
               <button
                 key={c}
                 className={cx('swatch', c === color && 'selected')}
