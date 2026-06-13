@@ -71,7 +71,8 @@ main.tsx
 ```
 src/
   main.tsx                 entry; mounts App in StoreProvider; imports leaflet css
-  App.tsx                  ready/crew/profile gating; tab state; MemberDetail overlay (openId)
+  App.tsx                  ready/crew/profile gating; Shell = embla swipe pager + tab bar +
+                           smart landing; MemberDetail/Combos overlays; persistent SosFab
   index.css                ALL styling (dark design system, mobile-first, CSS vars)
   types.ts                 Member, ConsumptionEvent, GeoPoint, ID
   vite-env.d.ts            env var types
@@ -96,6 +97,7 @@ src/
     Avatar.tsx             emoji+colour avatar
     MemberCard.tsx         crew-list card; exports DoseChips (per-substance timer chips); shows status
     StatusEditor.tsx       "Share a status" — preset chips + free text (self panel)
+    SosFab.tsx             persistent hold-to-activate SOS (~0.8s fill); also grabs a location fix
     ErrorBoundary.tsx      catches render errors → message + reload/reset (wraps App in main.tsx)
 
   screens/
@@ -212,8 +214,9 @@ to v2 when seed users were hidden in prod). Demo seed (`DemoStore`) only runs un
   https link). Map tiles: CARTO dark, cached via the service worker.
 - Leaflet markers use `L.divIcon` (HTML) to avoid bundler image issues.
 - PWA: `registerType: autoUpdate`. Manifest + icons in `vite.config.ts` / `public`.
-- When adding a screen: add a `Tab` in `App.tsx` (tabs: crew, log, map, combos,
-  you) or render it via the `openId` overlay pattern like `MemberDetail`.
+- When adding a screen: add it to the swipe pager + `TABS` in `App.tsx` (tabs:
+  crew, log, map, you) — keep safety/friction-sensitive actions OUT of swipe-only
+  reach — or render it via the overlay pattern like `MemberDetail` / Combos.
 
 ## 11. Known limitations / candidate next steps
 
@@ -251,7 +254,48 @@ in the host dashboard (build-time, `VITE_*`). Full guide: `DEPLOY.md`.
 private link; harden via security-definer RPCs or Supabase Auth before a wide
 launch (see §9 / DEPLOY.md security note).
 
-## 13. Status
+## 13. Interface redesign (branch `interface-redesign` — in progress)
+
+A 3-pass interface rework is underway on its own branch (**not yet merged to
+`master`**, so the live Vercel app is unchanged). Locked design decisions live in
+`docs/10-interface-and-features.md`; the guiding rule is **never put a
+safety-critical or friction-sensitive action behind a swipe or a menu** (gestures
+are unreliable when impaired/panicking).
+
+**Pass 1 — DONE (navigation shell):**
+- **Swipe paging** with `embla-carousel-react` across Crew/Log/Map/You; the bottom
+  tab bar stays always visible. On the Map, embla only honours **edge swipes**
+  (`watchDrag` + `data-no-swipe` on `.map-wrap`, 30px gutter) so Leaflet keeps
+  drag-to-pan.
+- **Smart landing** (`initialTab` in `App.tsx`): open on **Log**, flip to **Crew**
+  at launch if any crewmate is in an SOS/quiet/dangerous-mix tone.
+- **Persistent hold-to-activate SOS** (`components/SosFab.tsx`, ~0.8s fill) on every
+  screen; firing also grabs a one-off location fix. The old inline SOS buttons on
+  Crew + Map were removed (one canonical SOS control now).
+- **Member detail + Combos render as full-screen `.overlay`s** over the still-mounted
+  pager (no Leaflet remount on open).
+- **Quick-log recents row** on Log (top 4 most-logged → one tap). Gated (dangerous)
+  combos still fall through to the confirm + acknowledge step.
+- **Combos demoted** from a main tab to a reference overlay reached from Log
+  ("Check how things combine") and Settings ("Interaction chart").
+
+**Pass 2 — TODO ("You good?" directed check-in):** tap a crewmate → ask if they're
+OK; recipient gets a big ✅ I'm OK / 🆘 I need help prompt; **unanswered tells the
+asker only** (private, not a crew-wide alarm). Model like `events` — a small
+`check_requests` table (from_id, to_id, at, resolved_at) → `CrewStore` interface +
+**both** stores + SQL schema, mapped via `toRow`/`toMember`-style functions.
+
+**Pass 3 — TODO (Web Push):** so pings/SOS reach closed phones (Android + iOS 16.4+
+installed PWAs). Needs a service-worker `push` handler, a push-subscriptions table,
+a Supabase **edge function**, and **VAPID keys**.
+
+**Also deferred:** PWA manifest `shortcuts` (long-press icon → Log/SOS) — needs
+URL-param handling + a deliberate decision on the SOS shortcut bypassing the hold
+gesture; do it alongside a tiny router. The pager uses body-scroll with
+`align-items:flex-start`, so a short slide shows whitespace down to the tallest
+slide's height — acceptable for now, candidate polish.
+
+## 14. Status
 
 Builds clean (strict TS), serves 200, deployed to Vercel in **Synced mode** (user
 created the Supabase project). An `ErrorBoundary` now wraps `App` so runtime errors
