@@ -1,0 +1,14 @@
+# Netlify config — auto-detected when you connect the GitHub repo.
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# SPA fallback: any unknown path serves index.html (existing files like
+# /assets/*, /sw.js, /manifest.webmanifest are served directly first).
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
