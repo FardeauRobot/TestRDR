@@ -63,3 +63,5 @@ Map uses Leaflet + react-leaflet with free CARTO dark tiles (no API key). The PW
 - Location/geolocation requires HTTPS (or localhost) — deploy `dist/` to any static HTTPS host (Netlify/Vercel/Cloudflare Pages). Test location features over `--host` from a phone won't work without HTTPS.
 - Never commit `.env`. Use the **anon** key, never `service_role`.
 - See `README.md` (user-facing) and `SETUP-SUPABASE.md` (deploy/security model) for the full setup story.
+- Look at the `RECAP.md` that explains what was done before
+- For the full structured docs, see `docs/` (start at `docs/README.md`): architecture, data model, domain logic, backend, UI, deploy, a step-by-step build log, and `docs/09-tech-debt-and-review.md` (review findings + what's fixed/deferred).
