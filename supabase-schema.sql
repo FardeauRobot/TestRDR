@@ -101,8 +101,18 @@ grant execute on function public.join_crew(text, text)  to anon, authenticated;
 -- ---------------------------------------------------------------------------
 -- Realtime + Row Level Security.
 -- ---------------------------------------------------------------------------
-alter publication supabase_realtime add table public.profiles;
-alter publication supabase_realtime add table public.events;
+-- Realtime publication — only add tables that aren't already members.
+do $$
+begin
+  if not exists (select 1 from pg_publication_tables
+                 where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'profiles') then
+    alter publication supabase_realtime add table public.profiles;
+  end if;
+  if not exists (select 1 from pg_publication_tables
+                 where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'events') then
+    alter publication supabase_realtime add table public.events;
+  end if;
+end $$;
 
 -- crews: RLS on with NO policies → not directly readable/writable by clients.
 -- Access happens only through the security-definer functions above.
@@ -114,12 +124,20 @@ alter table public.crews enable row level security;
 alter table public.profiles enable row level security;
 alter table public.events   enable row level security;
 
+-- Policies (drop-then-create so the whole script is safe to re-run).
+drop policy if exists "read profiles"   on public.profiles;
+drop policy if exists "write profiles"  on public.profiles;
+drop policy if exists "update profiles" on public.profiles;
+drop policy if exists "delete profiles" on public.profiles;
 create policy "read profiles"   on public.profiles for select using (true);
 create policy "write profiles"  on public.profiles for insert with check (true);
 create policy "update profiles" on public.profiles for update using (true) with check (true);
 -- Member removal (admin action, gated in the app).
 create policy "delete profiles" on public.profiles for delete using (true);
 
+drop policy if exists "read events"  on public.events;
+drop policy if exists "write events" on public.events;
+drop policy if exists "delete events" on public.events;
 create policy "read events"  on public.events for select using (true);
 create policy "write events" on public.events for insert with check (true);
 create policy "delete events" on public.events for delete using (true);
