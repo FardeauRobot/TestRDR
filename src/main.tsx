@@ -4,11 +4,14 @@ import './index.css'
 import 'leaflet/dist/leaflet.css'
 import { App } from './App'
 import { StoreProvider } from './store/context'
+import { ErrorBoundary } from './components/ErrorBoundary'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <StoreProvider>
-      <App />
-    </StoreProvider>
+    <ErrorBoundary>
+      <StoreProvider>
+        <App />
+      </StoreProvider>
+    </ErrorBoundary>
   </StrictMode>
 )
