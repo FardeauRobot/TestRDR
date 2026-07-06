@@ -61,6 +61,13 @@ link prefills the crew name; you share the password separately).
 
 This is a **private app for trusted crews**, deliberately kept simple:
 
+- **Accounts** (nickname + password) work exactly like crews: the password is
+  **bcrypt-hashed** and only checked inside the `signup` / `login` functions; the
+  `accounts` table is RLS-locked so hashes never reach the client. Sign in once,
+  then join crews. (After upgrading an existing deployment, **re-run
+  `supabase-schema.sql`** to add the `accounts` table + `account_id` column;
+  members created before this change keep working but aren't linked to an account
+  until they sign up and rejoin.)
 - Crew passwords are **bcrypt-hashed** and only ever checked inside the
   `create_crew` / `join_crew` database functions. The `crews` table (and the
   hashes) is **not** readable by the app — clients can't list crews or see
@@ -69,6 +76,27 @@ This is a **private app for trusted crews**, deliberately kept simple:
   only receive after joining with the right name + password. Anyone holding a
   crew's UUID *and* the anon key could read that one crew, so don't paste
   internal links/keys publicly, and don't commit `.env` (it's git-ignored).
+
+### Operator console (moderate every crew)
+
+The app has a hidden owner console at **`<your-url>/?admin`** that can list and
+delete *any* crew. It's **locked until you set an operator secret**, and that
+secret is separate from the anon key — it never ships in the app bundle.
+
+To enable it, run this once in the SQL Editor (pick your own strong secret):
+
+```sql
+insert into public.app_admin (id, secret_hash)
+values (1, crypt('CHOOSE-A-STRONG-SECRET', gen_salt('bf')))
+on conflict (id) do update set secret_hash = excluded.secret_hash;
+```
+
+Then open `/?admin`, type that secret, and you'll see every crew with member/log
+counts and a delete button. Deletions cascade to all profiles and logs and can't
+be undone. (Re-run the same `insert … on conflict` to rotate the secret.) The
+gating RPCs are reachable with the public anon key, so they're technically
+brute-forceable — bcrypt makes that slow, but keep the secret strong and treat
+this as a private-deploy convenience, not hardened auth.
 
 ### Optional hardening (if you want stronger guarantees later)
 

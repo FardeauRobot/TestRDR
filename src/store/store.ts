@@ -1,4 +1,4 @@
-import type { ConsumptionEvent, GeoPoint, ID, Member } from '../types'
+import type { Account, ConsumptionEvent, GeoPoint, ID, Member } from '../types'
 
 export interface Crew {
   id: string
@@ -6,11 +6,13 @@ export interface Crew {
 }
 
 export interface CrewState {
+  /** The logged-in account on this device, or null if signed out. */
+  account: Account | null
   /** The crew this device is currently in, or null if not joined one yet. */
   crew: Crew | null
   members: Member[]
   events: ConsumptionEvent[]
-  /** The id of this device's own profile, or null if not onboarded yet. */
+  /** The id of this device's own profile in the current crew, or null. */
   meId: ID | null
   /** Whether the store has finished its first load. */
   ready: boolean
@@ -33,17 +35,24 @@ export interface CrewStore {
   getState(): CrewState
   subscribe(listener: () => void): () => void
 
-  /** Create a brand-new crew and enter it. Throws on duplicate name / bad input. */
+  /** Register a new account (nickname + password + avatar) and sign in. */
+  signup(nickname: string, password: string, emoji: string, color: string): Promise<void>
+  /** Sign in to an existing account. Throws if the nickname + password is wrong. */
+  login(nickname: string, password: string): Promise<void>
+  /** Sign out on this device (forgets account + crew here). */
+  logout(): Promise<void>
+  /** Update the signed-in account's avatar (also updates the current crew profile). */
+  updateAccount(patch: { emoji?: string; color?: string }): Promise<void>
+
+  /** Create a brand-new crew and enter it; auto-creates your member from the account. */
   createCrew(name: string, password: string): Promise<void>
-  /** Join an existing crew by name + password. Throws if the combo is wrong. */
+  /** Join an existing crew by name + password; auto-creates/reuses your member. */
   joinCrew(name: string, password: string): Promise<void>
   /** Leave the crew on this device (forgets crew + profile here). */
   leaveCrew(): Promise<void>
   /** Admin: permanently delete the whole crew (re-checks the crew password). */
   deleteCrew(password: string): Promise<void>
 
-  /** Create this device's profile (within the current crew) and become `meId`. */
-  createProfile(input: NewProfile): Promise<void>
   updateProfile(patch: Partial<NewProfile>): Promise<void>
   logConsumption(input: NewConsumption): Promise<void>
   checkIn(): Promise<void>
@@ -59,16 +68,15 @@ export interface CrewStore {
   removeMember(memberId: ID): Promise<void>
   /** Mark another member as safe — clears their SOS and refreshes their check-in. */
   clearMemberSos(memberId: ID): Promise<void>
+  /** Promote a member to admin, or demote them back to a regular member. */
+  setAdmin(memberId: ID, on: boolean): Promise<void>
 }
 
 /** Reusable subscription + immutable-snapshot machinery for store impls. */
 export abstract class BaseStore implements CrewStore {
   abstract readonly mode: 'demo' | 'synced'
-  protected state: CrewState = { crew: null, members: [], events: [], meId: null, ready: false }
+  protected state: CrewState = { account: null, crew: null, members: [], events: [], meId: null, ready: false }
   private listeners = new Set<() => void>()
-  /** True between creating a crew and making the creator's profile (→ admin).
-   *  Lives here so both stores share one definition of the flag's lifecycle. */
-  protected pendingAdmin = false
 
   getState(): CrewState {
     return this.state
@@ -88,11 +96,14 @@ export abstract class BaseStore implements CrewStore {
     return this.state.members.find((m) => m.id === this.state.meId)
   }
 
+  abstract signup(nickname: string, password: string, emoji: string, color: string): Promise<void>
+  abstract login(nickname: string, password: string): Promise<void>
+  abstract logout(): Promise<void>
+  abstract updateAccount(patch: { emoji?: string; color?: string }): Promise<void>
   abstract createCrew(name: string, password: string): Promise<void>
   abstract joinCrew(name: string, password: string): Promise<void>
   abstract leaveCrew(): Promise<void>
   abstract deleteCrew(password: string): Promise<void>
-  abstract createProfile(input: NewProfile): Promise<void>
   abstract updateProfile(patch: Partial<NewProfile>): Promise<void>
   abstract logConsumption(input: NewConsumption): Promise<void>
   abstract checkIn(): Promise<void>
@@ -102,4 +113,5 @@ export abstract class BaseStore implements CrewStore {
   abstract setMixWarnings(on: boolean): Promise<void>
   abstract removeMember(memberId: ID): Promise<void>
   abstract clearMemberSos(memberId: ID): Promise<void>
+  abstract setAdmin(memberId: ID, on: boolean): Promise<void>
 }

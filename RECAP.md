@@ -279,6 +279,61 @@ are unreliable when impaired/panicking).
 - **Combos demoted** from a main tab to a reference overlay reached from Log
   ("Check how things combine") and Settings ("Interaction chart").
 
+**Persistent live location — DONE (separate from the 3-pass plan):**
+- The geolocation watch was lifted out of `MapScreen` local state into an app-level
+  singleton `lib/liveLocation.ts` (`liveLocation` + `useLiveLocation()`, same
+  subscribe/snapshot shape as the store). It now **survives tab switches and a
+  reload** — the on/off choice is persisted in `localStorage` (`crewwatch.share.v1`)
+  and auto-resumes on cold start via `liveLocation.attach(store)` in `Shell`.
+  `detach()` (on leaving the crew) stops the watch but *keeps* the flag — this is
+  deliberate so StrictMode's throwaway unmount doesn't wipe the resume intent.
+- A persistent **"🟢 Live" pill** in the header (all screens) shows when you're
+  broadcasting; tap it to jump to the Map. Map pins older than `FRESH_MIN` (3 min)
+  render **dimmed ("last seen")** vs. a live "🟢 live" popup.
+- Still a foreground-only feature (PWA limit): stops when the app is fully closed.
+  True background updates would need native (or, partially, Web Push keep-alive) —
+  see the notifications discussion. Known edge: after leaving a crew and joining a
+  new one in the same session, sharing auto-resumes (flag kept); the header pill is
+  the safeguard.
+
+**Accounts / login — DONE (separate from the 3-pass plan):**
+- Users now **sign up / log in with a nickname + password** before joining a crew
+  (`screens/AuthScreen.tsx`; `Onboarding.tsx` deleted). The account is the global
+  identity and carries the **nickname + avatar**, so joining a crew
+  **auto-creates your member from it** — no onboarding step. New store actions
+  `signup / login / logout / updateAccount`; `createProfile` removed. Gate order in
+  `App.tsx`: `account → crew → shell`.
+- Same soft-trust pattern as crews: an `accounts` table (bcrypt hash, RLS-locked)
+  + `signup` / `login` / `update_account` RPCs; `profiles.account_id` links a member
+  to an account with a **unique `(crew_id, account_id)`** index. The client finds
+  "me" by `account_id` (works cross-device); `createMyProfile` inserts on join and
+  tolerates the unique-violation race. Account persisted in `crewwatch.account.v1`
+  (public fields only). Demo mode keeps accounts in `crewwatch.accounts.v1`
+  (plaintext — single-device, never synced).
+- **Requires re-running `supabase-schema.sql`** (adds `accounts`, `account_id`, the
+  RPCs). **Migration wart:** profiles that existed *before* accounts have a null
+  `account_id`; existing users get bounced to sign up and, on rejoining, a *new*
+  member is created — the old one lingers as an orphan (an admin can remove it via
+  Manage crew, or wipe profiles). No auto-adoption of old profiles was built.
+
+**Group moderation — DONE (separate from the 3-pass plan):**
+- **Per-crew admin panel** (`screens/ManageCrewScreen.tsx`, overlay reached from
+  Settings → "★ Manage crew", admin-only): one screen listing all members with
+  role/status, with **promote/demote admin** (new store action `setAdmin` — added
+  to the interface + both stores; it's a `profiles.is_admin` update), clear SOS,
+  remove member, and the crew-delete flow (moved here from Settings). Guards keep a
+  crew from ever losing its last admin. Works in demo + synced.
+- **Operator console** (`screens/OperatorConsole.tsx`) — app-owner moderation of
+  **every** crew, reached only via the hidden `?admin` URL (routed at the top of
+  `App.tsx`, before the crew gates). Because `crews` is RLS-locked, it uses two new
+  security-definer RPCs — `admin_list_crews` / `admin_delete_crew_by_id` — gated by
+  an **operator secret** (bcrypt hash in a new `app_admin` table). The secret is not
+  the anon key and never ships in the bundle; the operator types it in. **The
+  console is inert until you set the secret** (see SETUP-SUPABASE.md). Synced-mode
+  only; demo mode shows a notice. Uses `supabase.rpc(...)` directly, not `CrewStore`.
+  Known limitation: the RPCs are brute-forceable via the anon key (bcrypt slows it);
+  fine for a private deploy, tighten before a wide launch.
+
 **Pass 2 — TODO ("You good?" directed check-in):** tap a crewmate → ask if they're
 OK; recipient gets a big ✅ I'm OK / 🆘 I need help prompt; **unanswered tells the
 asker only** (private, not a crew-wide alarm). Model like `events` — a small

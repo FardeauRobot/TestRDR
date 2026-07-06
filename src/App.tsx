@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useState } from 'react'
 import useEmblaCarousel from 'embla-carousel-react'
 import type { EmblaCarouselType } from 'embla-carousel'
-import { useCrew } from './store/context'
+import { useCrew, useStore } from './store/context'
 import { SYNC_ENABLED } from './lib/supabase'
 import { memberStatus } from './lib/status'
+import { liveLocation, useLiveLocation } from './lib/liveLocation'
+import { AuthScreen } from './screens/AuthScreen'
 import { CrewGate } from './screens/CrewGate'
-import { Onboarding } from './screens/Onboarding'
 import { CrewScreen } from './screens/CrewScreen'
 import { MemberDetail } from './screens/MemberDetail'
 import { LogScreen } from './screens/LogScreen'
 import { MapScreen } from './screens/MapScreen'
 import { InteractionsScreen } from './screens/InteractionsScreen'
 import { SettingsScreen } from './screens/SettingsScreen'
+import { ManageCrewScreen } from './screens/ManageCrewScreen'
+import { OperatorConsole } from './screens/OperatorConsole'
 import { SosFab } from './components/SosFab'
 import type { CrewState } from './store/store'
 import { cx } from './lib/util'
@@ -40,13 +43,34 @@ function invitedCrewName(): string | undefined {
   return v ? v.trim() : undefined
 }
 
+/** The hidden operator route: ?admin (owner moderation console for all crews). */
+function isOperatorRoute(): boolean {
+  return new URLSearchParams(window.location.search).has('admin')
+}
+
 export function App() {
-  const { crew, meId, ready } = useCrew()
+  // Hidden owner console, independent of crew/onboarding state. The URL param is
+  // fixed for the tab's life, so this early return never changes hook ordering.
+  if (isOperatorRoute()) {
+    return (
+      <div className="app">
+        <OperatorConsole />
+      </div>
+    )
+  }
+  const { account, crew, meId, ready } = useCrew()
 
   if (!ready) {
     return (
       <div className="app">
         <div className="spinner" />
+      </div>
+    )
+  }
+  if (!account) {
+    return (
+      <div className="app">
+        <AuthScreen />
       </div>
     )
   }
@@ -57,10 +81,12 @@ export function App() {
       </div>
     )
   }
+  // Signed in and in a crew, but the member isn't set up yet (brief async gap
+  // while join auto-creates it) — show a spinner rather than a flash of nothing.
   if (!meId) {
     return (
       <div className="app">
-        <Onboarding />
+        <div className="spinner" />
       </div>
     )
   }
@@ -90,9 +116,19 @@ function watchDrag(_embla: EmblaCarouselType, evt: MouseEvent | TouchEvent): boo
 
 function Shell() {
   const state = useCrew()
+  const store = useStore()
+  const live = useLiveLocation()
   const [tab, setTab] = useState<Tab>(() => initialTab(state))
   const [openId, setOpenId] = useState<string | null>(null)
   const [combosOpen, setCombosOpen] = useState(false)
+  const [manageOpen, setManageOpen] = useState(false)
+
+  // Own the live-location watch at the app level so sharing survives tab switches
+  // and reloads; stop broadcasting when this device leaves the crew.
+  useEffect(() => {
+    liveLocation.attach(store)
+    return () => liveLocation.detach()
+  }, [store])
 
   const [emblaRef, embla] = useEmblaCarousel({
     startIndex: indexOf(tab),
@@ -114,6 +150,7 @@ function Shell() {
     (t: Tab) => {
       setOpenId(null)
       setCombosOpen(false)
+      setManageOpen(false)
       setTab(t)
       embla?.scrollTo(indexOf(t))
     },
@@ -127,9 +164,16 @@ function Shell() {
           <h1>Crew Watch</h1>
           <div className="sub">{titleFor(tab)}</div>
         </div>
-        <span className={cx('mode-pill', SYNC_ENABLED && 'synced')}>
-          {SYNC_ENABLED ? '🔗 Synced' : '📴 Demo'}
-        </span>
+        <div className="header-pills">
+          {live.sharing && (
+            <button className="live-pill" onClick={() => goTab('map')} title="You're sharing live location">
+              🟢 Live
+            </button>
+          )}
+          <span className={cx('mode-pill', SYNC_ENABLED && 'synced')}>
+            {SYNC_ENABLED ? '🔗 Synced' : '📴 Demo'}
+          </span>
+        </div>
       </header>
 
       <main className="main pager" ref={emblaRef}>
@@ -144,7 +188,7 @@ function Shell() {
             <MapScreen />
           </section>
           <section className="pager-slide">
-            <SettingsScreen onCombos={() => setCombosOpen(true)} />
+            <SettingsScreen onCombos={() => setCombosOpen(true)} onManage={() => setManageOpen(true)} />
           </section>
         </div>
       </main>
@@ -165,13 +209,18 @@ function Shell() {
           <InteractionsScreen />
         </div>
       )}
+      {manageOpen && (
+        <div className="overlay">
+          <ManageCrewScreen onBack={() => setManageOpen(false)} />
+        </div>
+      )}
 
       <SosFab />
 
       <nav className="tabbar">
         <div className="tabbar-inner">
           {TABS.map((t) => {
-            const active = tab === t.id && !openId && !combosOpen
+            const active = tab === t.id && !openId && !combosOpen && !manageOpen
             return (
               <button key={t.id} className={cx('tab', active && 'active')} onClick={() => goTab(t.id)}>
                 <span className="ic">{t.icon}</span>

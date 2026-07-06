@@ -1,10 +1,11 @@
 import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js'
-import type { ConsumptionEvent, Member, GeoPoint } from '../types'
+import type { Account, ConsumptionEvent, Member, GeoPoint } from '../types'
 import { BaseStore, type Crew, type NewConsumption, type NewProfile } from './store'
-import { CREW_KEY, loadCrew, meKey } from './persist'
+import { CREW_KEY, loadAccount, loadCrew, saveAccount } from './persist'
 
 interface ProfileRow {
   id: string
+  account_id: string | null
   name: string
   emoji: string
   color: string
@@ -33,6 +34,7 @@ interface EventRow {
 function toMember(r: ProfileRow): Member {
   return {
     id: r.id,
+    accountId: r.account_id ?? undefined,
     name: r.name,
     emoji: r.emoji,
     color: r.color,
@@ -98,22 +100,40 @@ export class SupabaseStore extends BaseStore {
   }
 
   private async boot(): Promise<void> {
-    const crew = loadCrew()
-    if (crew) {
-      const meId = localStorage.getItem(meKey(crew.id))
-      this.set({ crew, meId })
-      await this.enter(crew)
+    const account = loadAccount()
+    this.set({ account })
+    if (account) {
+      const crew = loadCrew()
+      if (crew) await this.enter(crew, false)
     }
     this.set({ ready: true })
   }
 
-  /** Fetch a crew's data and subscribe to live changes. */
-  private async enter(crew: Crew): Promise<void> {
+  /** Fetch a crew's data, ensure this account has a member, subscribe to changes. */
+  private async enter(crew: Crew, createAsAdmin: boolean): Promise<void> {
     localStorage.setItem(CREW_KEY, JSON.stringify(crew))
-    const meId = localStorage.getItem(meKey(crew.id))
-    this.set({ crew, meId, members: [], events: [] })
+    this.set({ crew, meId: null, members: [], events: [] })
     await this.refetch(crew.id)
+    if (!this.state.meId) await this.createMyProfile(crew.id, createAsAdmin)
     this.subscribe_(crew.id)
+  }
+
+  /** Insert this account's member in the crew (idempotent — a unique (crew_id,
+   *  account_id) index means a concurrent insert just resolves via refetch). */
+  private async createMyProfile(crewId: string, asAdmin: boolean): Promise<void> {
+    const account = this.state.account
+    if (!account) return
+    const { error } = await this.sb.from('profiles').insert({
+      crew_id: crewId,
+      account_id: account.id,
+      name: account.nickname,
+      emoji: account.emoji,
+      color: account.color,
+      is_admin: asAdmin
+    })
+    // 23505 = unique_violation: the member already exists (another device/tab).
+    if (error && error.code !== '23505') throw error
+    await this.refetch(crewId)
   }
 
   private subscribe_(crewId: string): void {
@@ -133,27 +153,67 @@ export class SupabaseStore extends BaseStore {
       this.sb.from('events').select('*').eq('crew_id', crewId).order('at', { ascending: false }).limit(500)
     ])
     const members = ((profiles ?? []) as ProfileRow[]).map(toMember)
-    // If our own profile vanished (removed by an admin, or crew deleted), drop meId.
-    const meId = this.state.meId && members.some((m) => m.id === this.state.meId) ? this.state.meId : null
+    // "Me" is the profile tied to my account; null if it's gone (kicked/crew deleted).
+    const accountId = this.state.account?.id
+    const meId = (accountId && members.find((m) => m.accountId === accountId)?.id) || null
     this.set({ members, events: ((events ?? []) as EventRow[]).map(toEvent), meId })
   }
 
+  async signup(nickname: string, password: string, emoji: string, color: string): Promise<void> {
+    const { data, error } = await this.sb.rpc('signup', { p_nickname: nickname, p_password: password, p_emoji: emoji, p_color: color })
+    if (error) throw new Error(humanize(error.message))
+    const account = (data as Account[] | null)?.[0]
+    if (!account) throw new Error('Could not create account')
+    saveAccount(account)
+    this.set({ account })
+  }
+
+  async login(nickname: string, password: string): Promise<void> {
+    const { data, error } = await this.sb.rpc('login', { p_nickname: nickname, p_password: password })
+    if (error) throw new Error(humanize(error.message))
+    const account = (data as Account[] | null)?.[0]
+    if (!account) throw new Error('Wrong nickname or password')
+    saveAccount(account)
+    this.set({ account })
+  }
+
+  async logout(): Promise<void> {
+    if (this.channel) {
+      void this.sb.removeChannel(this.channel)
+      this.channel = null
+    }
+    saveAccount(null)
+    localStorage.removeItem(CREW_KEY)
+    this.set({ account: null, crew: null, meId: null, members: [], events: [] })
+  }
+
+  async updateAccount(patch: { emoji?: string; color?: string }): Promise<void> {
+    const account = this.state.account
+    if (!account) return
+    const next = { ...account, ...patch }
+    const { error } = await this.sb.rpc('update_account', { p_id: account.id, p_emoji: next.emoji, p_color: next.color })
+    if (error) throw new Error(humanize(error.message))
+    saveAccount(next)
+    this.set({ account: next })
+    await this.patchMe(patch) // reflect the new avatar on the current crew profile
+  }
+
   async createCrew(name: string, password: string): Promise<void> {
+    if (!this.state.account) throw new Error('Sign in first')
     const { data, error } = await this.sb.rpc('create_crew', { p_name: name, p_password: password })
     if (error) throw new Error(humanize(error.message))
     const row = (data as Crew[] | null)?.[0]
     if (!row) throw new Error('Could not create crew')
-    this.pendingAdmin = true // creator becomes admin on their next profile
-    await this.enter({ id: row.id, name: row.name })
+    await this.enter({ id: row.id, name: row.name }, true) // creator → admin
   }
 
   async joinCrew(name: string, password: string): Promise<void> {
+    if (!this.state.account) throw new Error('Sign in first')
     const { data, error } = await this.sb.rpc('join_crew', { p_name: name, p_password: password })
     if (error) throw new Error(humanize(error.message))
     const row = (data as Crew[] | null)?.[0]
     if (!row) throw new Error('No crew matches that name + password')
-    this.pendingAdmin = false
-    await this.enter({ id: row.id, name: row.name })
+    await this.enter({ id: row.id, name: row.name }, false)
   }
 
   async leaveCrew(): Promise<void> {
@@ -172,20 +232,6 @@ export class SupabaseStore extends BaseStore {
     if (error) throw new Error(humanize(error.message))
     if (!data) throw new Error('Wrong crew password — nothing deleted')
     await this.leaveCrew()
-  }
-
-  async createProfile(input: NewProfile): Promise<void> {
-    const crew = this.state.crew
-    if (!crew) return
-    const { data, error } = await this.sb
-      .from('profiles')
-      .insert({ crew_id: crew.id, name: input.name, emoji: input.emoji, color: input.color, is_admin: this.pendingAdmin })
-      .select()
-      .single<ProfileRow>()
-    if (error || !data) throw error ?? new Error('Could not create profile')
-    this.pendingAdmin = false
-    localStorage.setItem(meKey(crew.id), data.id)
-    this.set({ meId: data.id, members: [...this.state.members, toMember(data)] })
   }
 
   /** Patch this device's own profile. Takes a camelCase domain patch. */
@@ -251,6 +297,10 @@ export class SupabaseStore extends BaseStore {
 
   async clearMemberSos(memberId: string): Promise<void> {
     await this.patchMember(memberId, { sos: false, lastCheckIn: Date.now() })
+  }
+
+  async setAdmin(memberId: string, on: boolean): Promise<void> {
+    await this.patchMember(memberId, { isAdmin: on })
   }
 }
 

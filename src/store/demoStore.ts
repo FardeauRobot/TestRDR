@@ -1,9 +1,10 @@
-import type { ConsumptionEvent, GeoPoint, Member } from '../types'
+import type { Account, ConsumptionEvent, GeoPoint, Member } from '../types'
 import { MIN, uid } from '../lib/util'
 import { BaseStore, type Crew, type NewConsumption, type NewProfile } from './store'
-import { CREW_KEY, loadCrew, meKey } from './persist'
+import { CREW_KEY, loadAccount, loadCrew, meKey, saveAccount } from './persist'
 
 const DATA_KEY = 'crewwatch.demo.v2'
+const ACCOUNTS_KEY = 'crewwatch.accounts.v1'
 
 /** A scatter point around a default centre (Paris) for seeded demo pins. */
 const CENTER = { lat: 48.8566, lng: 2.3522 }
@@ -14,6 +15,12 @@ function near(dLat: number, dLng: number, at: number): GeoPoint {
 interface Bucket {
   members: Member[]
   events: ConsumptionEvent[]
+}
+
+/** Demo accounts keep the password in localStorage — acceptable because demo mode
+ *  is single-device and never leaves the browser. Synced mode hashes it server-side. */
+interface DemoAccount extends Account {
+  password: string
 }
 
 function seed(): Bucket {
@@ -46,15 +53,17 @@ function slug(name: string): string {
 export class DemoStore extends BaseStore {
   readonly mode = 'demo' as const
   private bucket: Bucket
+  private accounts: DemoAccount[]
 
   constructor() {
     super()
     this.bucket = this.loadBucket()
-    const crew = loadCrew()
-    const storedMe = crew ? localStorage.getItem(meKey(crew.id)) : null
-    // Guard against a stale profile id (e.g. after a storage-version bump).
-    const meId = storedMe && this.bucket.members.some((m) => m.id === storedMe) ? storedMe : null
-    this.state = { crew, members: this.bucket.members, events: this.bucket.events, meId, ready: true }
+    this.accounts = this.loadAccounts()
+    const account = loadAccount()
+    const crew = account ? loadCrew() : null
+    this.state = { account, crew, members: this.bucket.members, events: this.bucket.events, meId: null, ready: true }
+    // Signed in and previously in a crew → make sure our member exists and land in.
+    if (account && crew) this.ensureProfile(crew, false)
   }
 
   private loadBucket(): Bucket {
@@ -73,28 +82,105 @@ export class DemoStore extends BaseStore {
     return fresh
   }
 
+  private loadAccounts(): DemoAccount[] {
+    try {
+      const raw = localStorage.getItem(ACCOUNTS_KEY)
+      if (raw) return JSON.parse(raw) as DemoAccount[]
+    } catch {
+      /* ignore */
+    }
+    return []
+  }
+
   private persist(): void {
     localStorage.setItem(DATA_KEY, JSON.stringify(this.bucket))
   }
 
-  private enterCrew(name: string): void {
+  private persistAccounts(): void {
+    localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(this.accounts))
+  }
+
+  private publicAccount(a: DemoAccount): Account {
+    return { id: a.id, nickname: a.nickname, emoji: a.emoji, color: a.color }
+  }
+
+  async signup(nickname: string, password: string, emoji: string, color: string): Promise<void> {
+    const nick = nickname.trim()
+    if (nick.length < 2) throw new Error('Nickname must be at least 2 characters')
+    if (password.length < 4) throw new Error('Password must be at least 4 characters')
+    if (this.accounts.some((a) => a.nickname.toLowerCase() === nick.toLowerCase())) {
+      throw new Error('That nickname is taken — pick another')
+    }
+    const acc: DemoAccount = { id: uid(), nickname: nick, password, emoji, color }
+    this.accounts = [...this.accounts, acc]
+    this.persistAccounts()
+    const account = this.publicAccount(acc)
+    saveAccount(account)
+    this.set({ account })
+  }
+
+  async login(nickname: string, password: string): Promise<void> {
+    const acc = this.accounts.find(
+      (a) => a.nickname.toLowerCase() === nickname.trim().toLowerCase() && a.password === password
+    )
+    if (!acc) throw new Error('Wrong nickname or password')
+    const account = this.publicAccount(acc)
+    saveAccount(account)
+    this.set({ account })
+  }
+
+  async logout(): Promise<void> {
+    saveAccount(null)
+    localStorage.removeItem(CREW_KEY)
+    this.set({ account: null, crew: null, meId: null })
+  }
+
+  async updateAccount(patch: { emoji?: string; color?: string }): Promise<void> {
+    const account = this.state.account
+    if (!account) return
+    this.accounts = this.accounts.map((a) => (a.id === account.id ? { ...a, ...patch } : a))
+    this.persistAccounts()
+    const next = { ...account, ...patch }
+    saveAccount(next)
+    this.set({ account: next })
+    this.patchMe(patch) // keep the current crew profile in step
+  }
+
+  private enterCrew(name: string): Crew {
     const crew: Crew = { id: slug(name), name: name.trim() }
     localStorage.setItem(CREW_KEY, JSON.stringify(crew))
-    const meId = localStorage.getItem(meKey(crew.id))
-    this.set({ crew, meId })
+    return crew
+  }
+
+  /** Find this account's member in the (shared demo) bucket, or create it. */
+  private ensureProfile(crew: Crew, asAdmin: boolean): void {
+    const account = this.state.account
+    if (!account) return
+    let mine = this.bucket.members.find((m) => m.accountId === account.id)
+    if (!mine) {
+      const now = Date.now()
+      mine = {
+        id: uid(), accountId: account.id, name: account.nickname, emoji: account.emoji, color: account.color,
+        isAdmin: asAdmin, mixWarnings: true, lastCheckIn: now, sos: false, updatedAt: now
+      }
+      this.bucket.members = [...this.bucket.members, mine]
+      this.persist()
+    }
+    localStorage.setItem(meKey(crew.id), mine.id)
+    this.set({ crew, members: this.bucket.members, meId: mine.id })
   }
 
   async createCrew(name: string, password: string): Promise<void> {
+    if (!this.state.account) throw new Error('Sign in first')
     if (name.trim().length < 2) throw new Error('Crew name must be at least 2 characters')
     if (password.length < 4) throw new Error('Password must be at least 4 characters')
-    this.pendingAdmin = true // the creator becomes admin on their next profile
-    this.enterCrew(name)
+    this.ensureProfile(this.enterCrew(name), true)
   }
 
   async joinCrew(name: string, _password: string): Promise<void> {
+    if (!this.state.account) throw new Error('Sign in first')
     if (name.trim().length < 2) throw new Error('Enter a crew name')
-    this.pendingAdmin = false
-    this.enterCrew(name) // demo: any name/password works
+    this.ensureProfile(this.enterCrew(name), false) // demo: any name/password works
   }
 
   async leaveCrew(): Promise<void> {
@@ -107,19 +193,6 @@ export class DemoStore extends BaseStore {
     this.persist()
     localStorage.removeItem(CREW_KEY)
     this.set({ crew: null, meId: null, members: [], events: [] })
-  }
-
-  async createProfile(input: NewProfile): Promise<void> {
-    const crew = this.state.crew
-    if (!crew) return
-    const now = Date.now()
-    const id = uid()
-    const member: Member = { id, ...input, isAdmin: this.pendingAdmin, mixWarnings: true, lastCheckIn: now, sos: false, updatedAt: now }
-    this.pendingAdmin = false
-    this.bucket.members = [...this.bucket.members, member]
-    this.persist()
-    localStorage.setItem(meKey(crew.id), id)
-    this.set({ members: this.bucket.members, meId: id })
   }
 
   /** Merge a partial patch into this device's own member (camelCase domain shape). */
@@ -178,6 +251,14 @@ export class DemoStore extends BaseStore {
     const now = Date.now()
     this.bucket.members = this.bucket.members.map((m) =>
       m.id === memberId ? { ...m, sos: false, lastCheckIn: now } : m
+    )
+    this.persist()
+    this.set({ members: this.bucket.members })
+  }
+
+  async setAdmin(memberId: string, on: boolean): Promise<void> {
+    this.bucket.members = this.bucket.members.map((m) =>
+      m.id === memberId ? { ...m, isAdmin: on, updatedAt: Date.now() } : m
     )
     this.persist()
     this.set({ members: this.bucket.members })

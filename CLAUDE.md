@@ -30,7 +30,7 @@ Everything routes through a single `CrewStore` interface (`src/store/store.ts`).
 
 When adding any user action that mutates crew state, **add it to the `CrewStore` interface in `store.ts` and implement it in BOTH `demoStore.ts` and `supabaseStore.ts`.** Both extend `BaseStore`, which provides the subscribe/snapshot machinery. React reads state via `useCrew()` (a `useSyncExternalStore` wrapper) and gets the store via `useStore()`.
 
-Note `pendingAdmin`: set true between `createCrew` and the creator's first `createProfile` so the crew creator's profile is flagged `isAdmin`. Both stores implement this.
+**Accounts:** users sign up / log in with a **nickname + password** (their global identity, carrying nickname + avatar) *before* joining a crew — `signup`/`login`/`logout`/`updateAccount` on the store; the account is persisted on the device (`crewwatch.account.v1`) and gates the app (`account` → `crew` → shell). Joining/creating a crew **auto-creates your member from the account** (`profiles.account_id`), so there is no separate onboarding step. The crew creator's member is flagged `isAdmin` by passing an admin flag through to that auto-create (no more `pendingAdmin` flag).
 
 ### Supabase specifics
 - Schema lives in `supabase-schema.sql` (run in the Supabase SQL editor). Tables: `crews`, `profiles`, `events`.
@@ -54,7 +54,7 @@ The substance catalogue (durations, redose windows, cautions, categories) is `sr
 
 ## UI shape
 
-`src/App.tsx` is the whole router: a gate flow (`CrewGate` → `Onboarding` once `crew`/`meId` exist) then a 4-tab shell (Crew / Log / Map / You) plus a `MemberDetail` overlay. No routing library; navigation is local `useState`. Invite links carry `?crew=Name` (prefills the name; password shared out-of-band). Screens are in `src/screens/`, shared bits in `src/components/`.
+`src/App.tsx` is the whole router: a gate flow (`AuthScreen` → `CrewGate`, then the member is auto-created so `meId` is set) into a 4-tab shell (Crew / Log / Map / You) plus a `MemberDetail` overlay. No routing library; navigation is local `useState`. Invite links carry `?crew=Name` (prefills the name; password shared out-of-band). Screens are in `src/screens/`, shared bits in `src/components/`.
 
 Map uses Leaflet + react-leaflet with free CARTO dark tiles (no API key). The PWA service worker (`vite-plugin-pwa`, configured in `vite.config.ts`) runtime-caches those map tiles `CacheFirst`; it does **not** precache them.
 

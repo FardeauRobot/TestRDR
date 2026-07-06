@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { useStore } from '../store/context'
+import { useCrew, useStore } from '../store/context'
 import { SYNC_ENABLED } from '../lib/supabase'
 import { cx } from '../lib/util'
 
-/** Shown before onboarding: create a crew, or join one by name + password. */
+/** Shown once signed in: create a crew, or join one by name + password. */
 export function CrewGate({ invitedName }: { invitedName?: string }) {
   const store = useStore()
+  const { account } = useCrew()
   const [mode, setMode] = useState<'join' | 'create'>(invitedName ? 'join' : 'create')
   const [name, setName] = useState(invitedName ?? '')
   const [password, setPassword] = useState('')
@@ -30,9 +31,20 @@ export function CrewGate({ invitedName }: { invitedName?: string }) {
   return (
     <div className="center-screen">
       <div className="brand-lg">Crew&nbsp;Watch</div>
+      {account && (
+        <div className="what" style={{ marginBottom: 4 }}>
+          Signed in as <strong>{account.emoji} {account.nickname}</strong> ·{' '}
+          <button
+            onClick={() => void store.logout()}
+            style={{ background: 'none', border: 'none', color: 'var(--accent)', padding: 0, textDecoration: 'underline', cursor: 'pointer' }}
+          >
+            log out
+          </button>
+        </div>
+      )}
       <p className="lead">
-        A private check-in for your crew. First, create your crew or join an
-        existing one — everyone with the same name + password sees each other.
+        Create your crew or join an existing one — everyone with the same name +
+        password sees each other.
       </p>
 
       <div className="btn-row" style={{ marginTop: 4 }}>

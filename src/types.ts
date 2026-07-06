@@ -1,8 +1,19 @@
 export type ID = string
 
+/** A login-level identity, shared across every crew this person joins.
+ *  Password is never held client-side — only these public fields are. */
+export interface Account {
+  id: ID
+  nickname: string
+  emoji: string
+  color: string
+}
+
 /** A crew member's profile. */
 export interface Member {
   id: ID
+  /** The account this profile belongs to (how a device finds "me" in a crew). */
+  accountId?: ID
   name: string
   emoji: string
   color: string
