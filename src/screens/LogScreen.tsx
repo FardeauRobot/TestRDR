@@ -1,14 +1,14 @@
-import { useState } from 'react'
-import { useCrew, useStore } from '../store/context'
+import { useMemo, useState } from 'react'
+import { useCrew, useMe, useStore } from '../store/context'
 import { SUBSTANCES, getSubstance, DISCLAIMER } from '../lib/substances'
-import { activeDoses, checkRedose, comboRisks } from '../lib/status'
+import { activeDoses, checkRedose, comboRisks, eventsFor } from '../lib/status'
 import { RISK_META } from '../lib/interactions'
 import { cx } from '../lib/util'
 
-export function LogScreen({ onDone }: { onDone: () => void }) {
-  const { members, events, meId } = useCrew()
+export function LogScreen({ onDone, onCombos }: { onDone: () => void; onCombos: () => void }) {
+  const { events, meId } = useCrew()
   const store = useStore()
-  const me = members.find((m) => m.id === meId)
+  const me = useMe()
   const [substanceId, setSubstanceId] = useState<string | null>(null)
   const [dose, setDose] = useState('')
   const [note, setNote] = useState('')
@@ -26,9 +26,38 @@ export function LogScreen({ onDone }: { onDone: () => void }) {
   const mustAck = hasGate
   const worstColor = risks.length ? RISK_META[risks[0].level].color : undefined
 
+  // Frictionless logging: your most-logged substances, tap once to log them.
+  const recents = useMemo(() => {
+    if (!meId) return []
+    const counts = new Map<string, number>()
+    for (const e of eventsFor(meId, events)) counts.set(e.substanceId, (counts.get(e.substanceId) ?? 0) + 1)
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([id]) => getSubstance(id))
+  }, [events, meId])
+
   function pick(id: string) {
     setSubstanceId(id)
     setAck(false)
+  }
+
+  /** One-tap log for a recent. Stays one tap unless the combo would be gated —
+   *  then it just selects it so the warning + acknowledgement show first. */
+  async function quickLog(id: string) {
+    if (!meId) return
+    const onBoard = warningsOn ? comboRisks(id, activeDoses(meId, events, now)) : []
+    if (onBoard.some((r) => RISK_META[r.level].gate)) {
+      pick(id)
+      return
+    }
+    setBusy(true)
+    try {
+      await store.logConsumption({ substanceId: id })
+      onDone()
+    } finally {
+      setBusy(false)
+    }
   }
 
   async function submit() {
@@ -48,6 +77,20 @@ export function LogScreen({ onDone }: { onDone: () => void }) {
 
   return (
     <>
+      {recents.length > 0 && (
+        <>
+          <div className="section-title">Quick log</div>
+          <div className="recents-row">
+            {recents.map((s) => (
+              <button key={s.id} className="recent-chip" disabled={busy} onClick={() => void quickLog(s.id)}>
+                <span className="emoji">{s.emoji}</span>
+                <span>{s.name}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
       <div className="section-title">What did you take?</div>
       <div className="sub-grid">
         {SUBSTANCES.map((s) => (
@@ -146,6 +189,10 @@ export function LogScreen({ onDone }: { onDone: () => void }) {
           </button>
         </div>
       )}
+
+      <button className="btn ghost" style={{ marginTop: 14 }} onClick={onCombos}>
+        🧪 Check how things combine
+      </button>
 
       <div className="disclaimer">{DISCLAIMER}</div>
     </>

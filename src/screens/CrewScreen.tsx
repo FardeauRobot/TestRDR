@@ -1,23 +1,21 @@
-import { useCrew, useStore } from '../store/context'
+import { useCrew, useMe, useStore } from '../store/context'
 import { useNow } from '../lib/useNow'
 import { MemberCard } from '../components/MemberCard'
 import { StatusEditor } from '../components/StatusEditor'
-import { memberStatus, type Tone } from '../lib/status'
+import { memberStatus, TONE_PRIORITY } from '../lib/status'
 import { formatAgo } from '../lib/util'
-
-const PRIORITY: Record<Tone, number> = { sos: 0, alert: 1, active: 2, ok: 3, idle: 4 }
 
 export function CrewScreen({ onLog, onOpen }: { onLog: () => void; onOpen: (id: string) => void }) {
   const { members, events, meId } = useCrew()
   const store = useStore()
   const now = useNow(1000)
 
-  const me = members.find((m) => m.id === meId)
+  const me = useMe()
   const others = members.filter((m) => m.id !== meId)
 
   const sorted = [...others].sort((a, b) => {
-    const pa = PRIORITY[memberStatus(a, events, now).tone]
-    const pb = PRIORITY[memberStatus(b, events, now).tone]
+    const pa = TONE_PRIORITY[memberStatus(a, events, now).tone]
+    const pb = TONE_PRIORITY[memberStatus(b, events, now).tone]
     return pa - pb
   })
 
@@ -45,13 +43,6 @@ export function CrewScreen({ onLog, onOpen }: { onLog: () => void; onOpen: (id: 
               ✅ I'm OK
             </button>
             <button className="btn" onClick={onLog}>➕ Log</button>
-            {me.sos ? (
-              <button className="btn danger" onClick={() => void store.setSos(false)}>Clear SOS</button>
-            ) : (
-              <button className="btn ghost" style={{ color: 'var(--sos)' }} onClick={() => void store.setSos(true)}>
-                SOS
-              </button>
-            )}
           </div>
           <StatusEditor />
           <div className="what" style={{ marginTop: 8, textAlign: 'center' }}>
@@ -64,8 +55,7 @@ export function CrewScreen({ onLog, onOpen }: { onLog: () => void; onOpen: (id: 
         <div className="banner warn" style={{ marginTop: 12 }}>
           <span>⚠️</span>
           <span>
-            {needAttention.map((m) => m.name).join(', ')} {needAttention.length === 1 ? 'might need' : 'might need'} a
-            check — say hi or head over.
+            {needAttention.map((m) => m.name).join(', ')} might need a check — say hi or head over.
           </span>
         </div>
       )}

@@ -11,7 +11,7 @@ export function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(' ')
 }
 
-const MIN = 60_000
+export const MIN = 60_000
 const HOUR = 60 * MIN
 
 /** "1h 04m", "12m 30s", "8s" — compact elapsed time since `from`. */

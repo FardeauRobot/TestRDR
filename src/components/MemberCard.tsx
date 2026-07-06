@@ -1,9 +1,8 @@
 import type { ConsumptionEvent, Member } from '../types'
 import { Avatar } from './Avatar'
-import { activeDoses, doseTimers, memberStatus, mixAlert, type DoseTimer } from '../lib/status'
+import { doseTimers, memberStatus, mixAlert, type DoseTimer } from '../lib/status'
+import { isDowner } from '../lib/substances'
 import { cx, formatAgo, formatElapsed } from '../lib/util'
-
-const DOWNERS = new Set(['Depressant', 'Opioid'])
 
 /** A row of "since last <substance>" timer chips. */
 export function DoseChips({ doses, now, max }: { doses: DoseTimer[]; now: number; max?: number }) {
@@ -14,7 +13,7 @@ export function DoseChips({ doses, now, max }: { doses: DoseTimer[]; now: number
       {shown.map((d) => (
         <span
           key={d.substance.id}
-          className={cx('tchip', !d.active && 'faded', d.active && DOWNERS.has(d.substance.category) && 'down')}
+          className={cx('tchip', !d.active && 'faded', d.active && isDowner(d.substance.category) && 'down')}
         >
           <span className="t-em">{d.substance.emoji}</span>
           <span className="t-time">{formatElapsed(d.lastAt, now)}</span>
@@ -40,8 +39,8 @@ export function MemberCard({
   onOpen?: (id: string) => void
 }) {
   const status = memberStatus(member, events, now)
-  const active = activeDoses(member.id, events, now)
   const all = doseTimers(member.id, events, now)
+  const active = all.filter((d) => d.active)
   const mix = mixAlert(active)
 
   // Prefer active timers; if nothing active, show the most recent ones faded.

@@ -5,6 +5,15 @@ import { minutesSince } from './util'
 
 export type Tone = 'sos' | 'alert' | 'active' | 'ok' | 'idle'
 
+/** Severity order (lowest = most urgent). Drives crew-list sorting; one source
+ *  of truth so a new tone is ranked in exactly one place. */
+export const TONE_PRIORITY: Record<Tone, number> = { sos: 0, alert: 1, active: 2, ok: 3, idle: 4 }
+
+/** A member's consumption events, newest first. */
+export function eventsFor(memberId: string, events: ConsumptionEvent[]): ConsumptionEvent[] {
+  return events.filter((e) => e.memberId === memberId).sort((a, b) => b.at - a.at)
+}
+
 export interface MemberStatus {
   tone: Tone
   /** Short headline, e.g. "Peaking", "Quiet 50 min". */
@@ -108,11 +117,10 @@ export function comboRisks(substanceId: string, active: DoseTimer[]): ComboRisk[
 }
 
 export function memberStatus(member: Member, events: ConsumptionEvent[], now: number): MemberStatus {
-  const active = activeDoses(member.id, events, now)
-  const last = doseTimers(member.id, events, now)[0]
-  const lastEvent = events
-    .filter((e) => e.memberId === member.id)
-    .sort((a, b) => b.at - a.at)[0]
+  const all = doseTimers(member.id, events, now)
+  const active = all.filter((d) => d.active)
+  const last = all[0]
+  const lastEvent = eventsFor(member.id, events)[0]
   const isActive = active.length > 0
 
   if (member.sos) {
@@ -126,7 +134,7 @@ export function memberStatus(member: Member, events: ConsumptionEvent[], now: nu
     return { tone: 'alert', label: `Silent ${Math.round(sinceCheckIn)} min`, lastEvent, active: true }
   }
   if (mix?.level === 'danger') {
-    return { tone: 'alert', label: 'Mixing depressants', lastEvent, active: true }
+    return { tone: 'alert', label: 'Dangerous mix', lastEvent, active: true }
   }
   if (isActive && sinceCheckIn > QUIET_MIN) {
     return { tone: 'alert', label: `Quiet ${Math.round(sinceCheckIn)} min — check in?`, lastEvent, active: true }
@@ -159,9 +167,7 @@ export function checkRedose(
 ): RedoseCheck {
   const sub = getSubstance(substanceId)
   const waitMin = sub.redoseWaitMins ?? 0
-  const lastSame = events
-    .filter((e) => e.memberId === memberId && e.substanceId === substanceId)
-    .sort((a, b) => b.at - a.at)[0]
+  const lastSame = eventsFor(memberId, events).find((e) => e.substanceId === substanceId)
   if (!lastSame || waitMin <= 0) {
     return { tooSoon: false, waitedMin: Infinity, waitMin }
   }
