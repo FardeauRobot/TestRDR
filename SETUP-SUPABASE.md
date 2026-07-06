@@ -57,6 +57,47 @@ Then share the URL. Everyone adds it to their home screen, and the first person
 password — or tap an invite link from the in-app *Invite someone* button (the
 link prefills the crew name; you share the password separately).
 
+## 6. Push notifications (lock-screen SOS alerts) — optional
+
+Lets an **SOS (and "You good?" pings) reach crewmates' lock screens even when the
+app is closed**. Needs a VAPID key pair and a small edge function. Skip this and
+everything else still works (the "Emergency alerts" toggle just stays hidden, and
+pings only surface when the recipient's app is open).
+
+Requires the [Supabase CLI](https://supabase.com/docs/guides/cli) (`supabase login`,
+`supabase link --project-ref YOUR-REF`).
+
+1. **Generate a VAPID key pair:**
+   ```bash
+   npx web-push generate-vapid-keys
+   ```
+   Copy the **Public Key** and **Private Key** it prints.
+
+2. **Give the app the public key.** Add to `.env` (and your host's env vars) and
+   rebuild:
+   ```
+   VITE_VAPID_PUBLIC_KEY=<public key>
+   ```
+
+3. **Add the `push_subscriptions` table.** It's already in `supabase-schema.sql`,
+   so if you re-run that script (safe to re-run) it's created for you.
+
+4. **Deploy the edge function and set its secrets:**
+   ```bash
+   supabase functions deploy send-push --no-verify-jwt
+   supabase secrets set \
+     VAPID_PUBLIC_KEY=<public key> \
+     VAPID_PRIVATE_KEY=<private key> \
+     VAPID_SUBJECT=mailto:you@example.com
+   ```
+   (`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are provided to the function
+   automatically — don't set them.)
+
+Each person then enables **Settings → Emergency alerts** on their device.
+**iPhone:** works only for a PWA **added to the Home Screen** (iOS 16.4+); open
+it from the Home Screen icon before toggling. Push also requires HTTPS (or
+localhost) — it won't work over a plain `--host` LAN address.
+
 ## Security model (read this)
 
 This is a **private app for trusted crews**, deliberately kept simple:
@@ -79,24 +120,27 @@ This is a **private app for trusted crews**, deliberately kept simple:
 
 ### Operator console (moderate every crew)
 
-The app has a hidden owner console at **`<your-url>/?admin`** that can list and
-delete *any* crew. It's **locked until you set an operator secret**, and that
-secret is separate from the anon key — it never ships in the app bundle.
+An **operator** account can list and delete *any* crew from inside the app —
+**Settings → 🛡️ Manage all crews**. There's no hidden URL or separate secret;
+the power is tied to a flag on the account itself (`accounts.is_operator`).
 
-To enable it, run this once in the SQL Editor (pick your own strong secret):
+Grant it to an account by running this once in the SQL Editor (the account must
+already exist — i.e. sign up in the app first):
 
 ```sql
-insert into public.app_admin (id, secret_hash)
-values (1, crypt('CHOOSE-A-STRONG-SECRET', gen_salt('bf')))
-on conflict (id) do update set secret_hash = excluded.secret_hash;
+update public.accounts set is_operator = true where lower(nickname) = 'fardadmin';
 ```
 
-Then open `/?admin`, type that secret, and you'll see every crew with member/log
-counts and a delete button. Deletions cascade to all profiles and logs and can't
-be undone. (Re-run the same `insert … on conflict` to rotate the secret.) The
-gating RPCs are reachable with the public anon key, so they're technically
-brute-forceable — bcrypt makes that slow, but keep the secret strong and treat
-this as a private-deploy convenience, not hardened auth.
+Then **log out and back in** as that account (the operator flag is read at login),
+open Settings, and you'll see the "Manage all crews" button → every crew with
+member/log counts and a delete button. Deletions cascade to all profiles and logs
+and can't be undone.
+
+To revoke, set `is_operator = false` for that nickname. Note the gating RPCs are
+reachable with the public anon key and authorise on the account id (an unguessable
+UUID handed out only by `login` on the correct password) — the same soft-trust
+model as crews. Fine for a private deploy; use Supabase Auth to harden before a
+wide launch.
 
 ### Optional hardening (if you want stronger guarantees later)
 

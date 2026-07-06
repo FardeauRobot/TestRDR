@@ -1,4 +1,4 @@
-import type { Account, ConsumptionEvent, GeoPoint, ID, Member } from '../types'
+import type { Account, CheckOutcome, CheckRequest, ConsumptionEvent, GeoPoint, ID, MapPin, Member } from '../types'
 
 export interface Crew {
   id: string
@@ -12,6 +12,10 @@ export interface CrewState {
   crew: Crew | null
   members: Member[]
   events: ConsumptionEvent[]
+  /** Pending + recently-resolved "You good?" check-in requests in this crew. */
+  checkRequests: CheckRequest[]
+  /** Custom markers the crew has dropped on the map (campsite, meeting point, etc). */
+  pins: MapPin[]
   /** The id of this device's own profile in the current crew, or null. */
   meId: ID | null
   /** Whether the store has finished its first load. */
@@ -28,6 +32,30 @@ export interface NewConsumption {
   substanceId: string
   dose?: string
   note?: string
+}
+
+export interface NewPin {
+  label: string
+  emoji: string
+  lat: number
+  lng: number
+}
+
+/** A browser Web Push subscription, flattened for storage. */
+export interface PushSubData {
+  endpoint: string
+  p256dh: string
+  auth: string
+}
+
+/** A crew as seen by an operator in the cross-crew console (rollup, no secrets). */
+export interface CrewSummary {
+  id: string
+  name: string
+  createdAt: number
+  memberCount: number
+  eventCount: number
+  lastActivity: number
 }
 
 export interface CrewStore {
@@ -56,12 +84,30 @@ export interface CrewStore {
   updateProfile(patch: Partial<NewProfile>): Promise<void>
   logConsumption(input: NewConsumption): Promise<void>
   checkIn(): Promise<void>
+  /** Admin: log the same consumption for a batch of other members at once
+   *  (e.g. a whole group that just took the same thing together). */
+  logConsumptionFor(memberIds: ID[], input: NewConsumption): Promise<void>
   setSos(on: boolean): Promise<void>
+  /** Send a "You good?" check-in request to another member (also pushes to them). */
+  requestCheck(toId: ID): Promise<void>
+  /** Answer a check-in request aimed at me. `help` also raises my SOS. */
+  resolveCheck(requestId: ID, outcome: CheckOutcome): Promise<void>
   updateLocation(point: GeoPoint | null): Promise<void>
   /** Set this member's current status note (empty string clears it). */
   setStatus(text: string): Promise<void>
   /** Toggle the pre-log risky-combination disclaimer for this member. */
   setMixWarnings(on: boolean): Promise<void>
+
+  /** Drop a custom marker on the map (campsite, meeting point, etc). */
+  addPin(input: NewPin): Promise<void>
+  /** Remove a map pin (the member who dropped it, or an admin). */
+  removePin(pinId: ID): Promise<void>
+
+  /** Persist this device's Web Push subscription so crewmates' alerts (SOS) can
+   *  reach it. No-op in demo mode (no backend to push from). */
+  savePushSubscription(sub: PushSubData): Promise<void>
+  /** Forget a device push subscription by its endpoint (e.g. on opt-out). */
+  removePushSubscription(endpoint: string): Promise<void>
 
   // --- Admin only (gated in the UI by the current member's isAdmin) ---
   /** Remove a member (and their logs) from the crew. */
@@ -70,12 +116,18 @@ export interface CrewStore {
   clearMemberSos(memberId: ID): Promise<void>
   /** Promote a member to admin, or demote them back to a regular member. */
   setAdmin(memberId: ID, on: boolean): Promise<void>
+
+  // --- Operator only (cross-crew; gated by the signed-in account's isOperator) ---
+  /** List every crew in the app with rollup counts. Operator accounts only. */
+  listAllCrews(): Promise<CrewSummary[]>
+  /** Permanently delete any crew by id (cascades to its profiles + logs). */
+  deleteCrewById(crewId: string): Promise<void>
 }
 
 /** Reusable subscription + immutable-snapshot machinery for store impls. */
 export abstract class BaseStore implements CrewStore {
   abstract readonly mode: 'demo' | 'synced'
-  protected state: CrewState = { account: null, crew: null, members: [], events: [], meId: null, ready: false }
+  protected state: CrewState = { account: null, crew: null, members: [], events: [], checkRequests: [], pins: [], meId: null, ready: false }
   private listeners = new Set<() => void>()
 
   getState(): CrewState {
@@ -107,11 +159,20 @@ export abstract class BaseStore implements CrewStore {
   abstract updateProfile(patch: Partial<NewProfile>): Promise<void>
   abstract logConsumption(input: NewConsumption): Promise<void>
   abstract checkIn(): Promise<void>
+  abstract logConsumptionFor(memberIds: ID[], input: NewConsumption): Promise<void>
   abstract setSos(on: boolean): Promise<void>
+  abstract requestCheck(toId: ID): Promise<void>
+  abstract resolveCheck(requestId: ID, outcome: CheckOutcome): Promise<void>
   abstract updateLocation(point: GeoPoint | null): Promise<void>
   abstract setStatus(text: string): Promise<void>
   abstract setMixWarnings(on: boolean): Promise<void>
+  abstract addPin(input: NewPin): Promise<void>
+  abstract removePin(pinId: ID): Promise<void>
+  abstract savePushSubscription(sub: PushSubData): Promise<void>
+  abstract removePushSubscription(endpoint: string): Promise<void>
   abstract removeMember(memberId: ID): Promise<void>
   abstract clearMemberSos(memberId: ID): Promise<void>
   abstract setAdmin(memberId: ID, on: boolean): Promise<void>
+  abstract listAllCrews(): Promise<CrewSummary[]>
+  abstract deleteCrewById(crewId: string): Promise<void>
 }

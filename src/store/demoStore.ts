@@ -1,6 +1,6 @@
-import type { Account, ConsumptionEvent, GeoPoint, Member } from '../types'
+import type { Account, CheckOutcome, CheckRequest, ConsumptionEvent, GeoPoint, MapPin, Member } from '../types'
 import { MIN, uid } from '../lib/util'
-import { BaseStore, type Crew, type NewConsumption, type NewProfile } from './store'
+import { BaseStore, type Crew, type CrewSummary, type NewConsumption, type NewPin, type NewProfile } from './store'
 import { CREW_KEY, loadAccount, loadCrew, meKey, saveAccount } from './persist'
 
 const DATA_KEY = 'crewwatch.demo.v2'
@@ -15,6 +15,8 @@ function near(dLat: number, dLng: number, at: number): GeoPoint {
 interface Bucket {
   members: Member[]
   events: ConsumptionEvent[]
+  checkRequests: CheckRequest[]
+  pins: MapPin[]
 }
 
 /** Demo accounts keep the password in localStorage — acceptable because demo mode
@@ -39,6 +41,10 @@ function seed(): Bucket {
       { id: uid(), memberId: 'm-max', substanceId: 'alcohol', dose: '2 beers', at: now - 50 * MIN },
       { id: uid(), memberId: 'm-max', substanceId: 'ketamine', at: now - 12 * MIN },
       { id: uid(), memberId: 'm-lou', substanceId: 'cannabis', at: now - 200 * MIN }
+    ],
+    checkRequests: [],
+    pins: [
+      { id: uid(), label: 'Camp', emoji: '⛺', lat: CENTER.lat - 0.0009, lng: CENTER.lng + 0.0004, createdBy: 'm-robin', createdAt: now - 100 * MIN }
     ]
   }
 }
@@ -61,7 +67,7 @@ export class DemoStore extends BaseStore {
     this.accounts = this.loadAccounts()
     const account = loadAccount()
     const crew = account ? loadCrew() : null
-    this.state = { account, crew, members: this.bucket.members, events: this.bucket.events, meId: null, ready: true }
+    this.state = { account, crew, members: this.bucket.members, events: this.bucket.events, checkRequests: this.bucket.checkRequests, pins: this.bucket.pins, meId: null, ready: true }
     // Signed in and previously in a crew → make sure our member exists and land in.
     if (account && crew) this.ensureProfile(crew, false)
   }
@@ -71,13 +77,13 @@ export class DemoStore extends BaseStore {
       const raw = localStorage.getItem(DATA_KEY)
       if (raw) {
         const p = JSON.parse(raw)
-        return { members: p.members ?? [], events: p.events ?? [] }
+        return { members: p.members ?? [], events: p.events ?? [], checkRequests: p.checkRequests ?? [], pins: p.pins ?? [] }
       }
     } catch {
       /* ignore */
     }
     // Sample crew only in local dev (`npm run dev`); deployed builds start empty.
-    const fresh = import.meta.env.DEV ? seed() : { members: [], events: [] }
+    const fresh = import.meta.env.DEV ? seed() : { members: [], events: [], checkRequests: [], pins: [] }
     localStorage.setItem(DATA_KEY, JSON.stringify(fresh))
     return fresh
   }
@@ -101,7 +107,7 @@ export class DemoStore extends BaseStore {
   }
 
   private publicAccount(a: DemoAccount): Account {
-    return { id: a.id, nickname: a.nickname, emoji: a.emoji, color: a.color }
+    return { id: a.id, nickname: a.nickname, emoji: a.emoji, color: a.color, isOperator: a.isOperator }
   }
 
   async signup(nickname: string, password: string, emoji: string, color: string): Promise<void> {
@@ -189,10 +195,10 @@ export class DemoStore extends BaseStore {
   }
 
   async deleteCrew(_password: string): Promise<void> {
-    this.bucket = { members: [], events: [] }
+    this.bucket = { members: [], events: [], checkRequests: [], pins: [] }
     this.persist()
     localStorage.removeItem(CREW_KEY)
-    this.set({ crew: null, meId: null, members: [], events: [] })
+    this.set({ crew: null, meId: null, members: [], events: [], checkRequests: [], pins: [] })
   }
 
   /** Merge a partial patch into this device's own member (camelCase domain shape). */
@@ -222,8 +228,43 @@ export class DemoStore extends BaseStore {
     this.patchMe({ lastCheckIn: Date.now(), sos: false })
   }
 
+  async logConsumptionFor(memberIds: string[], input: NewConsumption): Promise<void> {
+    if (memberIds.length === 0) return
+    const now = Date.now()
+    const ids = new Set(memberIds)
+    this.bucket.events = [
+      ...this.bucket.events,
+      ...memberIds.map((memberId) => ({ id: uid(), memberId, at: now, ...input }))
+    ]
+    this.bucket.members = this.bucket.members.map((m) =>
+      ids.has(m.id) ? { ...m, lastCheckIn: now, updatedAt: now } : m
+    )
+    this.persist()
+    this.set({ members: this.bucket.members, events: this.bucket.events })
+  }
+
   async setSos(on: boolean): Promise<void> {
     this.patchMe({ sos: on, lastCheckIn: Date.now() })
+  }
+
+  async requestCheck(toId: string): Promise<void> {
+    const meId = this.state.meId
+    if (!meId || toId === meId) return
+    const req: CheckRequest = { id: uid(), fromId: meId, toId, at: Date.now() }
+    this.bucket.checkRequests = [req, ...this.bucket.checkRequests]
+    this.persist()
+    this.set({ checkRequests: this.bucket.checkRequests })
+  }
+
+  async resolveCheck(requestId: string, outcome: CheckOutcome): Promise<void> {
+    const now = Date.now()
+    this.bucket.checkRequests = this.bucket.checkRequests.map((c) =>
+      c.id === requestId ? { ...c, resolvedAt: now, outcome } : c
+    )
+    this.persist()
+    this.set({ checkRequests: this.bucket.checkRequests })
+    if (outcome === 'help') this.patchMe({ sos: true, lastCheckIn: now })
+    else this.patchMe({ lastCheckIn: now })
   }
 
   async updateLocation(point: GeoPoint | null): Promise<void> {
@@ -239,6 +280,25 @@ export class DemoStore extends BaseStore {
   async setMixWarnings(on: boolean): Promise<void> {
     this.patchMe({ mixWarnings: on })
   }
+
+  async addPin(input: NewPin): Promise<void> {
+    const meId = this.state.meId
+    if (!meId) return
+    const pin: MapPin = { id: uid(), createdBy: meId, createdAt: Date.now(), ...input }
+    this.bucket.pins = [...this.bucket.pins, pin]
+    this.persist()
+    this.set({ pins: this.bucket.pins })
+  }
+
+  async removePin(pinId: string): Promise<void> {
+    this.bucket.pins = this.bucket.pins.filter((p) => p.id !== pinId)
+    this.persist()
+    this.set({ pins: this.bucket.pins })
+  }
+
+  // Push needs a backend + other devices; demo mode is single-device, so no-op.
+  async savePushSubscription(): Promise<void> {}
+  async removePushSubscription(): Promise<void> {}
 
   async removeMember(memberId: string): Promise<void> {
     this.bucket.members = this.bucket.members.filter((m) => m.id !== memberId)
@@ -262,5 +322,15 @@ export class DemoStore extends BaseStore {
     )
     this.persist()
     this.set({ members: this.bucket.members })
+  }
+
+  // Demo mode is single-device with no real cross-crew data, so the operator
+  // console has nothing to list here (the UI shows a "synced only" notice).
+  async listAllCrews(): Promise<CrewSummary[]> {
+    return []
+  }
+
+  async deleteCrewById(_crewId: string): Promise<void> {
+    /* no cross-crew concept in demo mode */
   }
 }

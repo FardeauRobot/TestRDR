@@ -17,8 +17,13 @@ The gate flow runs first, based on `CrewState`:
 otherwise         → header + <main> (tab content or MemberDetail) + tab bar
 ```
 
-Invite links carry `?crew=Name` (`invitedCrewName()` reads it) to prefill the
-crew name; the password is shared out-of-band.
+Invite links carry `?crew=Name` to prefill the crew name (password shared
+out-of-band), or `?crew=Name&pw=Password` — the form baked into the QR code
+generated in Settings — which auto-joins on scan with no typing. `App.tsx`
+reads both once via `readInvite()` (kept a pure function, since `StrictMode`
+double-invokes `useState` initializers in dev) and separately scrubs them from
+the address bar/history via `scrubInviteFromUrl()` in an effect, so a scanned
+password doesn't linger in browser history.
 
 > **Scalability note:** this flat "tab + single overlay" model is right for the
 > current size but breaks on a second overlay level, hardware/browser **back**,
@@ -36,7 +41,7 @@ crew name; the password is shared out-of-band.
 | `MapScreen` | Leaflet map; share-once / live location; SOS |
 | `InteractionsScreen` | the "Combos" reference chart |
 | `MemberDetail` | overlay: status, all timers, full history, admin actions |
-| `SettingsScreen` | profile edit, Safety toggle, crew info/invite, leave, admin delete-crew |
+| `SettingsScreen` | profile edit, Safety toggle, crew info/invite (link + QR code), leave, admin delete-crew |
 
 ## Shared components (`src/components/`)
 

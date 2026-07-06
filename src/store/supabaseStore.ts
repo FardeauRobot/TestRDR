@@ -1,6 +1,6 @@
 import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js'
-import type { Account, ConsumptionEvent, Member, GeoPoint } from '../types'
-import { BaseStore, type Crew, type NewConsumption, type NewProfile } from './store'
+import type { Account, CheckOutcome, CheckRequest, ConsumptionEvent, Member, GeoPoint, MapPin } from '../types'
+import { BaseStore, type Crew, type CrewSummary, type NewConsumption, type NewPin, type NewProfile, type PushSubData } from './store'
 import { CREW_KEY, loadAccount, loadCrew, saveAccount } from './persist'
 
 interface ProfileRow {
@@ -76,6 +76,18 @@ function toRow(patch: Partial<Member>): Record<string, unknown> {
   return row
 }
 
+interface AccountRow {
+  id: string
+  nickname: string
+  emoji: string
+  color: string
+  is_operator: boolean
+}
+
+function toAccount(r: AccountRow): Account {
+  return { id: r.id, nickname: r.nickname, emoji: r.emoji, color: r.color, isOperator: r.is_operator }
+}
+
 function toEvent(r: EventRow): ConsumptionEvent {
   return {
     id: r.id,
@@ -84,6 +96,48 @@ function toEvent(r: EventRow): ConsumptionEvent {
     dose: r.dose ?? undefined,
     note: r.note ?? undefined,
     at: new Date(r.at).getTime()
+  }
+}
+
+interface CheckRequestRow {
+  id: string
+  from_id: string
+  to_id: string
+  at: string
+  resolved_at: string | null
+  outcome: string | null
+}
+
+function toCheckRequest(r: CheckRequestRow): CheckRequest {
+  return {
+    id: r.id,
+    fromId: r.from_id,
+    toId: r.to_id,
+    at: new Date(r.at).getTime(),
+    resolvedAt: r.resolved_at ? new Date(r.resolved_at).getTime() : undefined,
+    outcome: (r.outcome as CheckOutcome | null) ?? undefined
+  }
+}
+
+interface PinRow {
+  id: string
+  label: string
+  emoji: string
+  lat: number
+  lng: number
+  created_by: string
+  created_at: string
+}
+
+function toPin(r: PinRow): MapPin {
+  return {
+    id: r.id,
+    label: r.label,
+    emoji: r.emoji,
+    lat: r.lat,
+    lng: r.lng,
+    createdBy: r.created_by,
+    createdAt: new Date(r.created_at).getTime()
   }
 }
 
@@ -112,7 +166,7 @@ export class SupabaseStore extends BaseStore {
   /** Fetch a crew's data, ensure this account has a member, subscribe to changes. */
   private async enter(crew: Crew, createAsAdmin: boolean): Promise<void> {
     localStorage.setItem(CREW_KEY, JSON.stringify(crew))
-    this.set({ crew, meId: null, members: [], events: [] })
+    this.set({ crew, meId: null, members: [], events: [], checkRequests: [], pins: [] })
     await this.refetch(crew.id)
     if (!this.state.meId) await this.createMyProfile(crew.id, createAsAdmin)
     this.subscribe_(crew.id)
@@ -142,28 +196,40 @@ export class SupabaseStore extends BaseStore {
       .channel(`crew:${crewId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles', filter: `crew_id=eq.${crewId}` }, () => void this.refetch(crewId))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'events', filter: `crew_id=eq.${crewId}` }, () => void this.refetch(crewId))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'check_requests', filter: `crew_id=eq.${crewId}` }, () => void this.refetch(crewId))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'map_pins', filter: `crew_id=eq.${crewId}` }, () => void this.refetch(crewId))
       .subscribe()
   }
 
   private async refetch(crewId: string): Promise<void> {
-    const [{ data: profiles }, { data: events }] = await Promise.all([
+    const [{ data: profiles }, { data: events }, { data: checks }, { data: pins }] = await Promise.all([
       this.sb.from('profiles').select('*').eq('crew_id', crewId),
       // NOTE: 500-event cap is a known boundary — a long-lived crew exceeding it
       // will drop its oldest logs from timers/history. Paginate/scope by time if hit.
-      this.sb.from('events').select('*').eq('crew_id', crewId).order('at', { ascending: false }).limit(500)
+      this.sb.from('events').select('*').eq('crew_id', crewId).order('at', { ascending: false }).limit(500),
+      // Recent check-in requests; older resolved ones aren't needed for the UI.
+      this.sb.from('check_requests').select('*').eq('crew_id', crewId).order('at', { ascending: false }).limit(100),
+      this.sb.from('map_pins').select('*').eq('crew_id', crewId)
     ])
     const members = ((profiles ?? []) as ProfileRow[]).map(toMember)
     // "Me" is the profile tied to my account; null if it's gone (kicked/crew deleted).
     const accountId = this.state.account?.id
     const meId = (accountId && members.find((m) => m.accountId === accountId)?.id) || null
-    this.set({ members, events: ((events ?? []) as EventRow[]).map(toEvent), meId })
+    this.set({
+      members,
+      events: ((events ?? []) as EventRow[]).map(toEvent),
+      checkRequests: ((checks ?? []) as CheckRequestRow[]).map(toCheckRequest),
+      pins: ((pins ?? []) as PinRow[]).map(toPin),
+      meId
+    })
   }
 
   async signup(nickname: string, password: string, emoji: string, color: string): Promise<void> {
     const { data, error } = await this.sb.rpc('signup', { p_nickname: nickname, p_password: password, p_emoji: emoji, p_color: color })
     if (error) throw new Error(humanize(error.message))
-    const account = (data as Account[] | null)?.[0]
-    if (!account) throw new Error('Could not create account')
+    const row = (data as AccountRow[] | null)?.[0]
+    if (!row) throw new Error('Could not create account')
+    const account = toAccount(row)
     saveAccount(account)
     this.set({ account })
   }
@@ -171,8 +237,9 @@ export class SupabaseStore extends BaseStore {
   async login(nickname: string, password: string): Promise<void> {
     const { data, error } = await this.sb.rpc('login', { p_nickname: nickname, p_password: password })
     if (error) throw new Error(humanize(error.message))
-    const account = (data as Account[] | null)?.[0]
-    if (!account) throw new Error('Wrong nickname or password')
+    const row = (data as AccountRow[] | null)?.[0]
+    if (!row) throw new Error('Wrong nickname or password')
+    const account = toAccount(row)
     saveAccount(account)
     this.set({ account })
   }
@@ -184,7 +251,7 @@ export class SupabaseStore extends BaseStore {
     }
     saveAccount(null)
     localStorage.removeItem(CREW_KEY)
-    this.set({ account: null, crew: null, meId: null, members: [], events: [] })
+    this.set({ account: null, crew: null, meId: null, members: [], events: [], checkRequests: [], pins: [] })
   }
 
   async updateAccount(patch: { emoji?: string; color?: string }): Promise<void> {
@@ -222,7 +289,7 @@ export class SupabaseStore extends BaseStore {
       this.channel = null
     }
     localStorage.removeItem(CREW_KEY)
-    this.set({ crew: null, meId: null, members: [], events: [] })
+    this.set({ crew: null, meId: null, members: [], events: [], checkRequests: [], pins: [] })
   }
 
   async deleteCrew(password: string): Promise<void> {
@@ -270,8 +337,97 @@ export class SupabaseStore extends BaseStore {
     await this.patchMe({ lastCheckIn: Date.now(), sos: false })
   }
 
+  async logConsumptionFor(memberIds: string[], input: NewConsumption): Promise<void> {
+    const crew = this.state.crew
+    if (!crew || memberIds.length === 0) return
+    const now = new Date().toISOString()
+    await this.sb.from('events').insert(
+      memberIds.map((memberId) => ({
+        crew_id: crew.id,
+        member_id: memberId,
+        substance_id: input.substanceId,
+        dose: input.dose ?? null,
+        note: input.note ?? null
+      }))
+    )
+    await this.sb.from('profiles').update({ last_check_in: now, updated_at: now }).in('id', memberIds)
+    await this.refetch(crew.id)
+  }
+
   async setSos(on: boolean): Promise<void> {
     await this.patchMe({ sos: on, lastCheckIn: Date.now() })
+    // Fan out a lock-screen push to the rest of the crew. Best-effort: the SOS
+    // state is already set above, so a push failure never blocks the alarm.
+    if (on) {
+      const { crew, meId } = this.state
+      const fromName = this.me?.name
+      if (crew && meId) {
+        try {
+          await this.sb.functions.invoke('send-push', {
+            body: {
+              crewId: crew.id,
+              excludeProfileId: meId,
+              title: '🆘 SOS',
+              body: `${fromName || 'A crewmate'} needs help — get to them.`,
+              tag: 'sos'
+            }
+          })
+        } catch {
+          /* push is additive; ignore delivery errors */
+        }
+      }
+    }
+  }
+
+  async requestCheck(toId: string): Promise<void> {
+    const { crew, meId } = this.state
+    if (!crew || !meId || toId === meId) return
+    const fromName = this.me?.name
+    await this.sb.from('check_requests').insert({ crew_id: crew.id, from_id: meId, to_id: toId })
+    await this.refetch(crew.id)
+    // Nudge their lock screen too (best-effort).
+    try {
+      await this.sb.functions.invoke('send-push', {
+        body: {
+          crewId: crew.id,
+          toProfileId: toId,
+          title: '👋 You good?',
+          body: `${fromName || 'A crewmate'} is checking in on you. Tap to reply.`,
+          tag: 'ping'
+        }
+      })
+    } catch {
+      /* push is additive; ignore delivery errors */
+    }
+  }
+
+  async resolveCheck(requestId: string, outcome: CheckOutcome): Promise<void> {
+    const { crew } = this.state
+    if (!crew) return
+    await this.sb
+      .from('check_requests')
+      .update({ resolved_at: new Date().toISOString(), outcome })
+      .eq('id', requestId)
+    // "I'm OK" counts as a check-in; "I need help" raises SOS (which also pushes).
+    if (outcome === 'help') await this.setSos(true)
+    else await this.patchMe({ lastCheckIn: Date.now() })
+    await this.refetch(crew.id)
+  }
+
+  async savePushSubscription(sub: PushSubData): Promise<void> {
+    const { crew, meId } = this.state
+    if (!crew || !meId) return
+    // Upsert on the unique endpoint so re-enabling on a device just refreshes it.
+    await this.sb
+      .from('push_subscriptions')
+      .upsert(
+        { crew_id: crew.id, profile_id: meId, endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth },
+        { onConflict: 'endpoint' }
+      )
+  }
+
+  async removePushSubscription(endpoint: string): Promise<void> {
+    await this.sb.from('push_subscriptions').delete().eq('endpoint', endpoint)
   }
 
   async updateLocation(point: GeoPoint | null): Promise<void> {
@@ -288,6 +444,27 @@ export class SupabaseStore extends BaseStore {
     await this.patchMe({ mixWarnings: on })
   }
 
+  async addPin(input: NewPin): Promise<void> {
+    const { crew, meId } = this.state
+    if (!crew || !meId) return
+    await this.sb.from('map_pins').insert({
+      crew_id: crew.id,
+      label: input.label,
+      emoji: input.emoji,
+      lat: input.lat,
+      lng: input.lng,
+      created_by: meId
+    })
+    await this.refetch(crew.id)
+  }
+
+  async removePin(pinId: string): Promise<void> {
+    const crew = this.state.crew
+    if (!crew) return
+    await this.sb.from('map_pins').delete().eq('id', pinId)
+    await this.refetch(crew.id)
+  }
+
   async removeMember(memberId: string): Promise<void> {
     const crew = this.state.crew
     if (!crew) return
@@ -302,6 +479,38 @@ export class SupabaseStore extends BaseStore {
   async setAdmin(memberId: string, on: boolean): Promise<void> {
     await this.patchMember(memberId, { isAdmin: on })
   }
+
+  async listAllCrews(): Promise<CrewSummary[]> {
+    const account = this.state.account
+    if (!account) return []
+    const { data, error } = await this.sb.rpc('admin_list_crews', { p_account_id: account.id })
+    if (error) throw new Error(humanize(error.message))
+    return ((data ?? []) as CrewRow[]).map((r) => ({
+      id: r.id,
+      name: r.name,
+      createdAt: new Date(r.created_at).getTime(),
+      memberCount: Number(r.member_count),
+      eventCount: Number(r.event_count),
+      lastActivity: new Date(r.last_activity).getTime()
+    }))
+  }
+
+  async deleteCrewById(crewId: string): Promise<void> {
+    const account = this.state.account
+    if (!account) return
+    const { error } = await this.sb.rpc('admin_delete_crew_by_id', { p_account_id: account.id, p_crew_id: crewId })
+    if (error) throw new Error(humanize(error.message))
+  }
+}
+
+/** Row shape returned by the admin_list_crews RPC (snake_case, counts as strings). */
+interface CrewRow {
+  id: string
+  name: string
+  created_at: string
+  member_count: number | string
+  event_count: number | string
+  last_activity: string
 }
 
 /** Strip Postgres prefixes so users see a clean message. */

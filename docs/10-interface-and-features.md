@@ -57,14 +57,24 @@ Completes a three-signal model alongside **✅ I'm OK** (self) and **🆘 SOS** 
   from_id, to_id, at, resolved_at) → both stores + schema, mapped via
   `toRow`/`toMember`-style functions.
 
-### Notifications — Web Push
-- Build **Web Push** so pings and SOS reach phones **even when the app is closed**.
+### Notifications — Web Push ✅ (SOS shipped)
+- **Web Push is built for SOS** so it reaches phones **even when the app is closed**.
+  Pings ("You good?") can reuse the same plumbing next.
 - Feasible in a PWA with no app-store fees: Android Chrome, and **iOS 16.4+ for
   PWAs installed to the home screen**.
-- Setup required: a service-worker `push` handler, storing push subscriptions
-  (Supabase table), and a **Supabase edge function** with **VAPID keys** to send.
-- Without push, pings/SOS only appear when the app is open — push is what makes the
-  "You good?" feature reliable.
+- How it's wired:
+  - Custom service worker `src/sw.ts` (vite-plugin-pwa `injectManifest`) with a
+    `push` + `notificationclick` handler; also re-hosts the map-tile caching.
+  - `push_subscriptions` table (`supabase-schema.sql`); client subscribes via
+    `src/lib/push.ts`; stored through `savePushSubscription` /
+    `removePushSubscription` on the `CrewStore`.
+  - `SupabaseStore.setSos(true)` / `requestCheck` invoke the **`send-push` edge
+    function** (`supabase/functions/send-push/`), which fans out via **VAPID** —
+    broadcast (SOS) or to a single member (ping).
+  - Toggle: **Settings → Emergency alerts** (synced mode + supported browsers).
+  - Setup steps: `SETUP-SUPABASE.md` §6.
+- **Synced-mode only** (demo mode no-ops). Best-effort: SOS still sets locally and
+  shows in-app even if the push send fails.
 
 ## Frictionless logging — to design into the Log screen
 - Land on Log (per smart landing).

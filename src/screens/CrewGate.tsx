@@ -1,15 +1,15 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useCrew, useStore } from '../store/context'
 import { SYNC_ENABLED } from '../lib/supabase'
 import { cx } from '../lib/util'
 
 /** Shown once signed in: create a crew, or join one by name + password. */
-export function CrewGate({ invitedName }: { invitedName?: string }) {
+export function CrewGate({ invitedName, invitedPassword }: { invitedName?: string; invitedPassword?: string }) {
   const store = useStore()
   const { account } = useCrew()
   const [mode, setMode] = useState<'join' | 'create'>(invitedName ? 'join' : 'create')
   const [name, setName] = useState(invitedName ?? '')
-  const [password, setPassword] = useState('')
+  const [password, setPassword] = useState(invitedPassword ?? '')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -27,6 +27,13 @@ export function CrewGate({ invitedName }: { invitedName?: string }) {
   }
 
   const canSubmit = name.trim().length >= 2 && password.length >= 4
+
+  // A QR/link that carried both name + password: join right away rather than
+  // making them press the button too.
+  useEffect(() => {
+    if (invitedName && invitedPassword && canSubmit) void submit()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <div className="center-screen">
@@ -93,9 +100,11 @@ export function CrewGate({ invitedName }: { invitedName?: string }) {
       </div>
 
       <div className="disclaimer">
-        {SYNC_ENABLED
-          ? 'Anyone with the crew name + password can join, so share them privately. You can invite people with a link after joining.'
-          : 'Demo mode: crews aren’t really separated on one device — any name/password works and shows sample mates. Add Supabase to make crews real & cross-device.'}
+        {invitedName && invitedPassword
+          ? 'Joining automatically from your invite QR code / link.'
+          : SYNC_ENABLED
+            ? 'Anyone with the crew name + password can join, so share them privately. You can invite people with a link after joining.'
+            : 'Demo mode: crews aren’t really separated on one device — any name/password works and shows sample mates. Add Supabase to make crews real & cross-device.'}
       </div>
     </div>
   )

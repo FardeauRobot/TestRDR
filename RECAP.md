@@ -324,15 +324,31 @@ are unreliable when impaired/panicking).
   remove member, and the crew-delete flow (moved here from Settings). Guards keep a
   crew from ever losing its last admin. Works in demo + synced.
 - **Operator console** (`screens/OperatorConsole.tsx`) — app-owner moderation of
-  **every** crew, reached only via the hidden `?admin` URL (routed at the top of
-  `App.tsx`, before the crew gates). Because `crews` is RLS-locked, it uses two new
-  security-definer RPCs — `admin_list_crews` / `admin_delete_crew_by_id` — gated by
-  an **operator secret** (bcrypt hash in a new `app_admin` table). The secret is not
-  the anon key and never ships in the bundle; the operator types it in. **The
-  console is inert until you set the secret** (see SETUP-SUPABASE.md). Synced-mode
-  only; demo mode shows a notice. Uses `supabase.rpc(...)` directly, not `CrewStore`.
-  Known limitation: the RPCs are brute-forceable via the anon key (bcrypt slows it);
-  fine for a private deploy, tighten before a wide launch.
+  **every** crew, reached from **Settings → 🛡️ Manage all crews**, shown only when
+  the signed-in account is an **operator**. Because `crews` is RLS-locked, it uses
+  two security-definer RPCs (`admin_list_crews` / `admin_delete_crew_by_id`) that
+  authorise on `accounts.is_operator` for the caller's account id — no separate
+  secret, no hidden URL. Store actions `listAllCrews` / `deleteCrewById`
+  (`CrewSummary` type); demo mode returns empty + a notice. **Grant operator rights
+  with** `update accounts set is_operator = true where lower(nickname)='…'` then
+  re-login (see SETUP-SUPABASE.md). (Earlier draft used a `/?admin` URL + `app_admin`
+  secret table — that was replaced; the schema drops `app_admin` if present.) Same
+  soft-trust caveat: RPCs are anon-key reachable, authorised by the account UUID.
+
+**Map pins — DONE:** members can drop a custom marker on the map (campsite,
+parking, meeting point, etc.) — `screens/MapScreen.tsx`'s "📌 Drop pin" enters a
+placing mode, a tap on the map opens a naming dialog (icon + label), and
+`store.addPin` persists it. New `MapPin` type + `addPin`/`removePin` on
+`CrewStore`, implemented in both stores; a `map_pins` table (permissive,
+crew-scoped RLS + realtime) in `supabase-schema.sql`. Pins render as
+visually-distinct markers; the popup's "Remove pin" button is gated to whoever
+dropped it or a crew admin. **Gotcha worth remembering:** the pin-naming dialog is
+a `position: fixed` overlay, and the app's swipe-pager track uses a CSS
+`transform` — per spec that hijacks `fixed` descendants to position relative to
+the transformed ancestor instead of the viewport, so the dialog rendered
+off-screen until it was moved to a `createPortal(..., document.body)`. Any future
+`fixed`-position overlay mounted *inside* a pager slide needs the same treatment
+(or mount it beside `<SosFab />`/`<CheckPrompt />`, outside `<main className="pager">`).
 
 **Pass 2 — TODO ("You good?" directed check-in):** tap a crewmate → ask if they're
 OK; recipient gets a big ✅ I'm OK / 🆘 I need help prompt; **unanswered tells the

@@ -2,16 +2,30 @@ import { useCrew, useMe, useStore } from '../store/context'
 import { useNow } from '../lib/useNow'
 import { MemberCard } from '../components/MemberCard'
 import { StatusEditor } from '../components/StatusEditor'
-import { memberStatus, TONE_PRIORITY } from '../lib/status'
+import { memberStatus, outgoingChecks, TONE_PRIORITY } from '../lib/status'
 import { formatAgo } from '../lib/util'
 
-export function CrewScreen({ onLog, onOpen }: { onLog: () => void; onOpen: (id: string) => void }) {
-  const { members, events, meId } = useCrew()
+export function CrewScreen({
+  onLog,
+  onOpen,
+  onBulkLog
+}: {
+  onLog: () => void
+  onOpen: (id: string) => void
+  onBulkLog: () => void
+}) {
+  const { members, events, checkRequests, meId } = useCrew()
   const store = useStore()
   const now = useNow(1000)
 
   const me = useMe()
   const others = members.filter((m) => m.id !== meId)
+
+  // My own unanswered pings past the timeout — private to me, the asker.
+  const overduePings = outgoingChecks(checkRequests, meId, now)
+    .filter((c) => c.overdue)
+    .map((c) => members.find((m) => m.id === c.toId))
+    .filter((m): m is NonNullable<typeof m> => !!m)
 
   const sorted = [...others].sort((a, b) => {
     const pa = TONE_PRIORITY[memberStatus(a, events, now).tone]
@@ -60,7 +74,32 @@ export function CrewScreen({ onLog, onOpen }: { onLog: () => void; onOpen: (id: 
         </div>
       )}
 
-      <div className="section-title">Crew · {others.length}</div>
+      {overduePings.map((m) => (
+        <button
+          key={m.id}
+          className="banner warn"
+          style={{ marginTop: 12, width: '100%', textAlign: 'left', cursor: 'pointer' }}
+          onClick={() => onOpen(m.id)}
+        >
+          <span>⏳</span>
+          <span>
+            <strong>{m.name} hasn't answered your check-in.</strong> Tap to see them, or head over.
+          </span>
+        </button>
+      ))}
+
+      <div className="section-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span>Crew · {others.length}</span>
+        {me?.isAdmin && others.length > 0 && (
+          <button
+            className="btn ghost"
+            style={{ width: 'auto', padding: '2px 10px', textTransform: 'none', letterSpacing: 'normal', fontSize: 12 }}
+            onClick={onBulkLog}
+          >
+            👥➕ Log for others
+          </button>
+        )}
+      </div>
       {sorted.length === 0 ? (
         <div className="empty">No one else has joined yet.<br />Share the app with your crew.</div>
       ) : (

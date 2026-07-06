@@ -8,6 +8,11 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      // Custom service worker (src/sw.ts) so we can handle Web Push. Vite injects
+      // the precache manifest into it; runtime caching lives in the SW itself.
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
       includeAssets: ['favicon.svg', 'icon-192.png', 'icon-512.png'],
       manifest: {
         name: 'Crew Watch',
@@ -22,19 +27,21 @@ export default defineConfig({
           { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
           { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
-        ]
-      },
-      workbox: {
-        // Map tiles are large & external — don't try to precache them.
-        navigateFallbackDenylist: [/^\/api/],
-        runtimeCaching: [
+        ],
+        // Long-press the home-screen icon → jump straight to Log or SOS. The app
+        // reads ?action= on load (src/App.tsx) to land on the right screen.
+        shortcuts: [
           {
-            urlPattern: /^https:\/\/[abcd]\.basemaps\.cartocdn\.com\/.*/i,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'map-tiles',
-              expiration: { maxEntries: 400, maxAgeSeconds: 60 * 60 * 24 * 14 }
-            }
+            name: 'Log what you took',
+            short_name: 'Log',
+            url: '?action=log',
+            icons: [{ src: 'icon-192.png', sizes: '192x192', type: 'image/png' }]
+          },
+          {
+            name: 'Send SOS',
+            short_name: 'SOS',
+            url: '?action=sos',
+            icons: [{ src: 'icon-192.png', sizes: '192x192', type: 'image/png' }]
           }
         ]
       }

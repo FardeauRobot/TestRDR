@@ -1,20 +1,24 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { QRCodeSVG } from 'qrcode.react'
 import { useCrew, useMe, useStore } from '../store/context'
 import { Avatar } from '../components/Avatar'
 import { SYNC_ENABLED } from '../lib/supabase'
+import { getExistingSubscription, isPushSupported, pushPermission, subscribeToPush, unsubscribeFromPush } from '../lib/push'
 import { getSubstance } from '../lib/substances'
 import { eventsFor } from '../lib/status'
 import { AVATAR_COLORS, AVATAR_EMOJIS } from '../lib/avatar'
 import { useNow } from '../lib/useNow'
 import { formatAgo, cx } from '../lib/util'
 
-export function SettingsScreen({ onCombos, onManage }: { onCombos: () => void; onManage: () => void }) {
-  const { crew, events } = useCrew()
+export function SettingsScreen({ onCombos, onManage, onOperator }: { onCombos: () => void; onManage: () => void; onOperator: () => void }) {
+  const { crew, events, account } = useCrew()
   const store = useStore()
   const now = useNow(10000)
   const me = useMe()
   const [editing, setEditing] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [qrOpen, setQrOpen] = useState(false)
+  const [qrPassword, setQrPassword] = useState('')
 
   if (!me) return null
 
@@ -34,6 +38,17 @@ export function SettingsScreen({ onCombos, onManage }: { onCombos: () => void; o
       /* user cancelled share */
     }
   }
+
+  function toggleQr() {
+    setQrOpen((v) => {
+      if (v) setQrPassword('')
+      return !v
+    })
+  }
+
+  const qrLink = crew && qrPassword.length >= 4
+    ? `${window.location.origin}${import.meta.env.BASE_URL}?${new URLSearchParams({ crew: crew.name, pw: qrPassword }).toString()}`
+    : null
 
   const myEvents = eventsFor(me.id, events).slice(0, 8)
 
@@ -97,6 +112,7 @@ export function SettingsScreen({ onCombos, onManage }: { onCombos: () => void; o
             <span />
           </button>
         </div>
+        {SYNC_ENABLED && isPushSupported() && <PushAlerts />}
         <button className="btn ghost" style={{ marginTop: 12 }} onClick={onCombos}>
           🧪 Interaction chart
         </button>
@@ -121,11 +137,47 @@ export function SettingsScreen({ onCombos, onManage }: { onCombos: () => void; o
           The link prefills the crew name — share the password separately so only
           people you trust can join.
         </div>
+
+        <button className="btn ghost" style={{ marginTop: 10 }} onClick={toggleQr}>
+          {qrOpen ? 'Hide QR code' : '📷 Show QR code'}
+        </button>
+
+        {qrOpen && (
+          <div style={{ marginTop: 10 }}>
+            <div className="field" style={{ marginTop: 0 }}>
+              <label>Crew password</label>
+              <input
+                className="input"
+                type="password"
+                value={qrPassword}
+                placeholder="needed to bake into the QR code"
+                onChange={(e) => setQrPassword(e.target.value)}
+              />
+            </div>
+            {qrLink && (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: 12 }}>
+                <div style={{ background: '#fff', padding: 12, borderRadius: 12 }}>
+                  <QRCodeSVG value={qrLink} size={200} />
+                </div>
+                <div className="what" style={{ marginTop: 10, textAlign: 'center', lineHeight: 1.4 }}>
+                  Scanning this signs someone straight into "{crew?.name}" — no typing needed.
+                  Treat it like the crew password itself: don't post it anywhere public.
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {me.isAdmin && (
         <button className="btn" style={{ marginTop: 12 }} onClick={onManage}>
           ★ Manage crew — members & roles
+        </button>
+      )}
+
+      {account?.isOperator && (
+        <button className="btn" style={{ marginTop: 10 }} onClick={onOperator}>
+          🛡️ Manage all crews (operator)
         </button>
       )}
 
@@ -176,6 +228,67 @@ function EditProfile() {
           ))}
         </div>
       </div>
+    </div>
+  )
+}
+
+/** Toggle for lock-screen push alerts when a crewmate broadcasts SOS. Only
+ *  mounted in synced mode on browsers that support Web Push. */
+function PushAlerts() {
+  const store = useStore()
+  const [on, setOn] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [denied, setDenied] = useState(pushPermission() === 'denied')
+
+  // Reflect whatever subscription this device already has.
+  useEffect(() => {
+    void getExistingSubscription().then((sub) => setOn(!!sub))
+  }, [])
+
+  async function toggle() {
+    if (busy) return
+    setBusy(true)
+    try {
+      if (on) {
+        const endpoint = await unsubscribeFromPush()
+        if (endpoint) await store.removePushSubscription(endpoint)
+        setOn(false)
+      } else {
+        const sub = await subscribeToPush()
+        if (!sub) {
+          // Permission denied or dismissed.
+          setDenied(pushPermission() === 'denied')
+          return
+        }
+        await store.savePushSubscription(sub)
+        setDenied(false)
+        setOn(true)
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="toggle-row" style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+      <div className="label">
+        <div style={{ fontWeight: 600 }}>Emergency alerts</div>
+        <div className="what" style={{ marginTop: 2, lineHeight: 1.4 }}>
+          Get a lock-screen notification when a crewmate broadcasts SOS — even with the app closed.
+          {denied && ' Notifications are blocked; enable them for this site in your browser settings.'}
+          {!denied && ' On iPhone, add this app to your Home Screen first.'}
+        </div>
+      </div>
+      <button
+        className={cx('toggle', on && 'on')}
+        role="switch"
+        aria-checked={on}
+        aria-label="Emergency alerts"
+        disabled={busy}
+        onClick={() => void toggle()}
+      >
+        <span />
+      </button>
     </div>
   )
 }

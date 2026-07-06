@@ -25,9 +25,13 @@ create table if not exists public.accounts (
   password_hash text not null,
   emoji         text not null default '🙂',
   color         text not null default '#38bdf8',
+  -- App-wide moderator: can list & delete ANY crew (see admin_* functions below).
+  is_operator   boolean not null default false,
   created_at    timestamptz not null default now()
 );
 create unique index if not exists accounts_nick_lower_idx on public.accounts (lower(nickname));
+-- Safe to re-run on an existing database.
+alter table public.accounts add column if not exists is_operator boolean not null default false;
 
 -- One row per crew member's profile.
 create table if not exists public.profiles (
@@ -60,6 +64,47 @@ create table if not exists public.events (
   note         text,
   at           timestamptz not null default now()
 );
+
+-- One row per "You good?" check-in request (directed member → member).
+-- Pending while resolved_at is null; the recipient answers 'ok' or 'help'.
+create table if not exists public.check_requests (
+  id          uuid primary key default gen_random_uuid(),
+  crew_id     uuid not null references public.crews(id)    on delete cascade,
+  from_id     uuid not null references public.profiles(id) on delete cascade,
+  to_id       uuid not null references public.profiles(id) on delete cascade,
+  at          timestamptz not null default now(),
+  resolved_at timestamptz,
+  outcome     text
+);
+create index if not exists check_requests_crew_idx on public.check_requests(crew_id);
+
+-- One row per device push subscription (Web Push). Used to reach crewmates on
+-- their lock screen when someone broadcasts SOS, even with the app closed.
+create table if not exists public.push_subscriptions (
+  id         uuid primary key default gen_random_uuid(),
+  crew_id    uuid not null references public.crews(id)    on delete cascade,
+  profile_id uuid not null references public.profiles(id) on delete cascade,
+  endpoint   text not null,
+  p256dh     text not null,
+  auth       text not null,
+  created_at timestamptz not null default now()
+);
+-- One row per browser push endpoint; re-subscribing upserts on this.
+create unique index if not exists push_subs_endpoint_idx on public.push_subscriptions(endpoint);
+create index        if not exists push_subs_crew_idx     on public.push_subscriptions(crew_id);
+
+-- One row per custom map marker a crew member drops (campsite, meeting point, etc).
+create table if not exists public.map_pins (
+  id         uuid primary key default gen_random_uuid(),
+  crew_id    uuid not null references public.crews(id)    on delete cascade,
+  label      text not null,
+  emoji      text not null default '📍',
+  lat        double precision not null,
+  lng        double precision not null,
+  created_by uuid references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+create index if not exists map_pins_crew_idx on public.map_pins(crew_id);
 
 -- Safe to re-run on an existing database (adds new columns if missing).
 alter table public.profiles add column if not exists is_admin     boolean not null default false;
@@ -138,8 +183,11 @@ grant execute on function public.delete_crew(text, text) to anon, authenticated;
 -- accounts table is RLS-locked and hashes are only ever touched inside these
 -- security-definer functions, so clients never read password hashes.
 -- ---------------------------------------------------------------------------
-create or replace function public.signup(p_nickname text, p_password text, p_emoji text, p_color text)
-returns table(id uuid, nickname text, emoji text, color text)
+-- Dropped-then-created because the return shape gained is_operator (create or
+-- replace can't change a function's OUT columns).
+drop function if exists public.signup(text, text, text, text);
+create function public.signup(p_nickname text, p_password text, p_emoji text, p_color text)
+returns table(id uuid, nickname text, emoji text, color text, is_operator boolean)
 language plpgsql security definer set search_path = public, extensions as $$
 declare new_id uuid;
 begin
@@ -158,15 +206,16 @@ begin
   exception when unique_violation then
     raise exception 'That nickname is taken — pick another';
   end;
-  return query select a.id, a.nickname, a.emoji, a.color from public.accounts a where a.id = new_id;
+  return query select a.id, a.nickname, a.emoji, a.color, a.is_operator from public.accounts a where a.id = new_id;
 end; $$;
 
-create or replace function public.login(p_nickname text, p_password text)
-returns table(id uuid, nickname text, emoji text, color text)
+drop function if exists public.login(text, text);
+create function public.login(p_nickname text, p_password text)
+returns table(id uuid, nickname text, emoji text, color text, is_operator boolean)
 language plpgsql security definer set search_path = public, extensions as $$
 begin
   return query
-    select a.id, a.nickname, a.emoji, a.color from public.accounts a
+    select a.id, a.nickname, a.emoji, a.color, a.is_operator from public.accounts a
     where lower(a.nickname) = lower(trim(p_nickname))
       and a.password_hash = crypt(p_password, a.password_hash);
   -- No match → empty result; the app shows "wrong nickname or password".
@@ -205,6 +254,14 @@ begin
                  where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'events') then
     alter publication supabase_realtime add table public.events;
   end if;
+  if not exists (select 1 from pg_publication_tables
+                 where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'check_requests') then
+    alter publication supabase_realtime add table public.check_requests;
+  end if;
+  if not exists (select 1 from pg_publication_tables
+                 where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'map_pins') then
+    alter publication supabase_realtime add table public.map_pins;
+  end if;
 end $$;
 
 -- crews + accounts: RLS on with NO policies → not directly readable/writable by
@@ -218,6 +275,9 @@ alter table public.accounts enable row level security;
 -- small trusted crew. See SETUP-SUPABASE.md for a stricter auth-based variant.
 alter table public.profiles enable row level security;
 alter table public.events   enable row level security;
+alter table public.check_requests      enable row level security;
+alter table public.push_subscriptions  enable row level security;
+alter table public.map_pins            enable row level security;
 
 -- Policies (drop-then-create so the whole script is safe to re-run).
 drop policy if exists "read profiles"   on public.profiles;
@@ -237,36 +297,68 @@ create policy "read events"  on public.events for select using (true);
 create policy "write events" on public.events for insert with check (true);
 create policy "delete events" on public.events for delete using (true);
 
+-- check_requests: same permissive, crew-scoped trust model. Recipients update
+-- their own row to answer (resolved_at + outcome).
+drop policy if exists "read checks"   on public.check_requests;
+drop policy if exists "write checks"  on public.check_requests;
+drop policy if exists "update checks" on public.check_requests;
+drop policy if exists "delete checks" on public.check_requests;
+create policy "read checks"   on public.check_requests for select using (true);
+create policy "write checks"  on public.check_requests for insert with check (true);
+create policy "update checks" on public.check_requests for update using (true) with check (true);
+create policy "delete checks" on public.check_requests for delete using (true);
+
+-- map_pins: same permissive, crew-scoped trust model. Anyone in the crew can
+-- drop or remove a pin (e.g. campsite, meeting point).
+drop policy if exists "read pins"   on public.map_pins;
+drop policy if exists "write pins"  on public.map_pins;
+drop policy if exists "delete pins" on public.map_pins;
+create policy "read pins"   on public.map_pins for select using (true);
+create policy "write pins"  on public.map_pins for insert with check (true);
+create policy "delete pins" on public.map_pins for delete using (true);
+
+-- push_subscriptions: same permissive, crew-scoped trust model. Endpoints are
+-- unguessable, and the send-sos edge function reads them via the service role.
+drop policy if exists "read push"   on public.push_subscriptions;
+drop policy if exists "write push"  on public.push_subscriptions;
+drop policy if exists "update push" on public.push_subscriptions;
+drop policy if exists "delete push" on public.push_subscriptions;
+create policy "read push"   on public.push_subscriptions for select using (true);
+create policy "write push"  on public.push_subscriptions for insert with check (true);
+create policy "update push" on public.push_subscriptions for update using (true) with check (true);
+create policy "delete push" on public.push_subscriptions for delete using (true);
+
 -- ---------------------------------------------------------------------------
 -- Operator console (cross-crew moderation).
--- The app owner can list/delete ANY crew — but crews are otherwise unreadable
--- (RLS-locked), so this goes through security-definer RPCs gated by a single
--- operator secret whose bcrypt hash lives in `app_admin`. The secret is NOT the
--- anon key and never ships in the client bundle; the operator types it in.
+-- An app-wide operator can list/delete ANY crew. Crews are otherwise unreadable
+-- (RLS-locked), so this goes through security-definer RPCs. Authorisation is the
+-- caller's own account: the RPC checks `accounts.is_operator` for the account id
+-- the client holds after login (the same soft-trust model as the rest of the app
+-- — that id is only handed out by `login` on the correct password).
 --
--- INERT UNTIL YOU SET A SECRET. With no `app_admin` row every check fails, so the
--- console stays locked. Enable it by running (once), with your own secret:
---   insert into public.app_admin (id, secret_hash)
---   values (1, crypt('CHOOSE-A-STRONG-SECRET', gen_salt('bf')))
---   on conflict (id) do update set secret_hash = excluded.secret_hash;
+-- Grant operator rights to an account (run once, e.g. for FardAdmin):
+--   update public.accounts set is_operator = true where lower(nickname) = 'fardadmin';
 -- ---------------------------------------------------------------------------
-create table if not exists public.app_admin (
-  id          integer primary key default 1,
-  secret_hash text not null,
-  constraint app_admin_singleton check (id = 1)
-);
--- RLS on, no policies → not client-readable; reached only via the functions below.
-alter table public.app_admin enable row level security;
+-- Retire the old secret-gated variant if a previous schema version created it.
+drop function if exists public.admin_list_crews(text);
+drop function if exists public.admin_delete_crew_by_id(text, uuid);
+drop table if exists public.app_admin;
 
--- List every crew with rollup counts + last activity. Raises on a bad secret.
-create or replace function public.admin_list_crews(p_secret text)
+create or replace function public.is_operator(p_account_id uuid)
+returns boolean
+language sql security definer set search_path = public, extensions as $$
+  select coalesce((select a.is_operator from public.accounts a where a.id = p_account_id), false);
+$$;
+
+-- List every crew with rollup counts + last activity. Raises unless the caller
+-- is an operator account.
+create or replace function public.admin_list_crews(p_account_id uuid)
 returns table(id uuid, name text, created_at timestamptz,
               member_count bigint, event_count bigint, last_activity timestamptz)
 language plpgsql security definer set search_path = public, extensions as $$
 begin
-  if not exists (select 1 from public.app_admin a
-                 where a.id = 1 and a.secret_hash = crypt(p_secret, a.secret_hash)) then
-    raise exception 'Wrong operator secret';
+  if not public.is_operator(p_account_id) then
+    raise exception 'Not authorised';
   end if;
   return query
     select c.id, c.name, c.created_at,
@@ -281,25 +373,24 @@ begin
     order by last_activity desc;
 end; $$;
 
--- Delete any crew by id (cascades to profiles + events). Raises on a bad secret.
-create or replace function public.admin_delete_crew_by_id(p_secret text, p_crew_id uuid)
+-- Delete any crew by id (cascades to profiles + events). Operator-only.
+create or replace function public.admin_delete_crew_by_id(p_account_id uuid, p_crew_id uuid)
 returns integer
 language plpgsql security definer set search_path = public, extensions as $$
 declare deleted integer;
 begin
-  if not exists (select 1 from public.app_admin a
-                 where a.id = 1 and a.secret_hash = crypt(p_secret, a.secret_hash)) then
-    raise exception 'Wrong operator secret';
+  if not public.is_operator(p_account_id) then
+    raise exception 'Not authorised';
   end if;
   delete from public.crews where id = p_crew_id;
   get diagnostics deleted = row_count;
   return deleted;  -- 0 → no such crew
 end; $$;
 
-revoke all on function public.admin_list_crews(text)          from public;
-revoke all on function public.admin_delete_crew_by_id(text, uuid) from public;
-grant execute on function public.admin_list_crews(text)          to anon, authenticated;
-grant execute on function public.admin_delete_crew_by_id(text, uuid) to anon, authenticated;
+revoke all on function public.admin_list_crews(uuid)          from public;
+revoke all on function public.admin_delete_crew_by_id(uuid, uuid) from public;
+grant execute on function public.admin_list_crews(uuid)          to anon, authenticated;
+grant execute on function public.admin_delete_crew_by_id(uuid, uuid) to anon, authenticated;
 
 -- Optional housekeeping: forget locations older than a day (run manually or via cron).
 -- update public.profiles set lat = null, lng = null, loc_at = null
