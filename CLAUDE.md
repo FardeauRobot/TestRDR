@@ -54,7 +54,7 @@ The substance catalogue (durations, redose windows, cautions, categories) is `sr
 
 ## UI shape
 
-`src/App.tsx` is the whole router: a gate flow (`AuthScreen` → `CrewGate`, then the member is auto-created so `meId` is set) into a 4-tab shell (Crew / Log / Map / You) plus a `MemberDetail` overlay. No routing library; navigation is local `useState`. Invite links carry `?crew=Name` (prefills the name; password shared out-of-band). Screens are in `src/screens/`, shared bits in `src/components/`.
+`src/App.tsx` is the whole router: a gate flow (`AuthScreen` → `CrewGate`, then the member is auto-created so `meId` is set) into a 4-tab shell (Crew / Log / Map / You) plus a `MemberDetail` overlay. No routing library; navigation is local `useState`. Invite links carry `?crew=Name` (prefills the name; password shared out-of-band), or `?crew=Name&pw=Password` for the QR code generated in Settings ("Show QR code") — scanning that auto-joins with no typing. `App.tsx`'s `readInvite()`/`scrubInviteFromUrl()` split is deliberate: the `useState` initializer that reads the query params must stay a pure read (React `StrictMode` double-invokes it in dev), while stripping `crew`/`pw` from the address bar/history is a separate, idempotent effect. Screens are in `src/screens/`, shared bits in `src/components/`.
 
 Map uses Leaflet + react-leaflet with free CARTO dark tiles (no API key). The PWA service worker (`vite-plugin-pwa`, configured in `vite.config.ts`) runtime-caches those map tiles `CacheFirst`; it does **not** precache them.
 

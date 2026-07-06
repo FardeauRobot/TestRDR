@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { useCrew, useMe, useMember, useStore } from '../store/context'
 import { useNow } from '../lib/useNow'
 import { Avatar } from '../components/Avatar'
-import { doseTimers, eventsFor, memberStatus, mixAlert } from '../lib/status'
+import { doseTimers, eventsFor, memberStatus, mixAlert, outgoingCheckTo } from '../lib/status'
 import { getSubstance, isDowner } from '../lib/substances'
 import { cx, formatAgo, formatElapsed, minutesSince } from '../lib/util'
 
@@ -15,7 +15,7 @@ function clockTime(at: number): string {
 }
 
 export function MemberDetail({ id, onBack }: { id: string; onBack: () => void }) {
-  const { events, meId } = useCrew()
+  const { events, checkRequests, meId } = useCrew()
   const store = useStore()
   const now = useNow(1000)
 
@@ -33,6 +33,9 @@ export function MemberDetail({ id, onBack }: { id: string; onBack: () => void })
   const mix = mixAlert(timers.filter((d) => d.active))
   const history = eventsFor(member.id, events)
   const canAdmin = !!me?.isAdmin && member.id !== meId
+  // "You good?" only makes sense for someone else who isn't already on SOS.
+  const canPing = member.id !== meId && !member.sos
+  const myPing = outgoingCheckTo(checkRequests, meId, member.id, now)
 
   async function remove() {
     if (window.confirm(`Remove ${member!.name} from the crew? This deletes their logs too.`)) {
@@ -80,14 +83,42 @@ export function MemberDetail({ id, onBack }: { id: string; onBack: () => void })
         </div>
       )}
 
+      {canPing && (
+        <div className="card" style={{ marginTop: 12 }}>
+          {myPing?.overdue ? (
+            // Private to me (the asker): an unanswered ping past the timeout.
+            <div className="banner warn" style={{ marginBottom: 10 }}>
+              <span>⏳</span>
+              <span>
+                <strong>No reply to your check-in</strong> — sent {formatAgo(myPing.at, now)}. Consider getting to them.
+              </span>
+            </div>
+          ) : myPing ? (
+            <div className="what" style={{ marginBottom: 10 }}>
+              ⏳ Waiting for a reply — asked {formatAgo(myPing.at, now)}.
+            </div>
+          ) : (
+            <div className="what" style={{ marginBottom: 10 }}>
+              Nudge {member.name} to confirm they're OK. Only you see whether they reply.
+            </div>
+          )}
+          <button className="btn" onClick={() => void store.requestCheck(member.id)}>
+            👋 {myPing ? 'Ask again' : 'You good?'}
+          </button>
+        </div>
+      )}
+
       {canAdmin && (
         <div className="card" style={{ marginTop: 12 }}>
           <div className="what" style={{ marginBottom: 10 }}>★ Admin actions</div>
           <div className="btn-row">
-            {member.sos && (
+            {member.sos ? (
+              // While SOS is live, only offer "Mark safe" — hide the destructive
+              // remove button so it can't be misclicked during an emergency.
               <button className="btn" onClick={() => void store.clearMemberSos(member.id)}>Mark safe</button>
+            ) : (
+              <button className="btn danger" onClick={() => void remove()}>Remove from crew</button>
             )}
-            <button className="btn danger" onClick={() => void remove()}>Remove from crew</button>
           </div>
         </div>
       )}

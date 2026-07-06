@@ -7,6 +7,8 @@ export interface Account {
   nickname: string
   emoji: string
   color: string
+  /** App-wide moderator: can list & delete any crew. Absent/false for normal users. */
+  isOperator?: boolean
 }
 
 /** A crew member's profile. */
@@ -35,6 +37,18 @@ export interface Member {
   updatedAt: number
 }
 
+/** A custom marker crew members drop on the map (campsite, meeting point, etc). */
+export interface MapPin {
+  id: ID
+  label: string
+  emoji: string
+  lat: number
+  lng: number
+  /** The member who dropped it. */
+  createdBy: ID
+  createdAt: number
+}
+
 export interface GeoPoint {
   lat: number
   lng: number
@@ -42,6 +56,25 @@ export interface GeoPoint {
   accuracy?: number
   /** When this fix was taken (ms epoch). */
   at: number
+}
+
+/** How a "You good?" check-in request was answered. */
+export type CheckOutcome = 'ok' | 'help'
+
+/** A directed "You good?" check-in request from one member to another.
+ *  Pending while `resolvedAt` is unset; the recipient answers ✅ ok / 🆘 help. */
+export interface CheckRequest {
+  id: ID
+  /** The member who asked. */
+  fromId: ID
+  /** The member being asked. */
+  toId: ID
+  /** When it was sent (ms epoch). */
+  at: number
+  /** When the recipient answered (ms epoch); unset while pending. */
+  resolvedAt?: number
+  /** The recipient's answer, once resolved. */
+  outcome?: CheckOutcome
 }
 
 /** A single consumption log entry. */

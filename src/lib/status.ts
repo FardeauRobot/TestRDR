@@ -1,4 +1,4 @@
-import type { ConsumptionEvent, Member } from '../types'
+import type { CheckRequest, ConsumptionEvent, Member } from '../types'
 import { getSubstance, type Substance } from './substances'
 import { interaction, interactionReason, RISK_META, type RiskLevel } from './interactions'
 import { minutesSince } from './util'
@@ -173,4 +173,42 @@ export function checkRedose(
   }
   const waitedMin = minutesSince(lastSame.at, now)
   return { tooSoon: waitedMin < waitMin, waitedMin, waitMin, lastAt: lastSame.at }
+}
+
+// --- "You good?" check-in requests -----------------------------------------
+
+/** How long an unanswered ping waits before the app privately tells the asker. */
+export const PING_TIMEOUT_MIN = 5
+
+/** The oldest still-pending "You good?" request aimed at me, if any. This is
+ *  what the recipient gets prompted to answer. */
+export function incomingCheck(checkRequests: CheckRequest[], meId: string | null): CheckRequest | undefined {
+  if (!meId) return undefined
+  return checkRequests
+    .filter((c) => c.toId === meId && !c.resolvedAt)
+    .sort((a, b) => a.at - b.at)[0]
+}
+
+/** Pings I sent that are still unanswered, split by whether they've passed the
+ *  timeout. Only the asker sees these — an unanswered ping is private, never a
+ *  crew-wide alarm. */
+export function outgoingChecks(
+  checkRequests: CheckRequest[],
+  meId: string | null,
+  now: number
+): { toId: string; at: number; overdue: boolean }[] {
+  if (!meId) return []
+  return checkRequests
+    .filter((c) => c.fromId === meId && !c.resolvedAt)
+    .map((c) => ({ toId: c.toId, at: c.at, overdue: minutesSince(c.at, now) >= PING_TIMEOUT_MIN }))
+}
+
+/** My still-pending ping to a specific member, if one is in flight. */
+export function outgoingCheckTo(
+  checkRequests: CheckRequest[],
+  meId: string | null,
+  toId: string,
+  now: number
+): { at: number; overdue: boolean } | undefined {
+  return outgoingChecks(checkRequests, meId, now).find((c) => c.toId === toId)
 }

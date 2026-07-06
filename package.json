@@ -15,6 +15,7 @@
     "@supabase/supabase-js": "^2.47.0",
     "embla-carousel-react": "^8.6.0",
     "leaflet": "^1.9.4",
+    "qrcode.react": "^4.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-leaflet": "^4.2.1"
@@ -27,6 +28,10 @@
     "sharp": "^0.33.5",
     "typescript": "^5.6.3",
     "vite": "^6.0.3",
-    "vite-plugin-pwa": "^0.21.1"
+    "vite-plugin-pwa": "^0.21.1",
+    "workbox-expiration": "^7.4.1",
+    "workbox-precaching": "^7.4.1",
+    "workbox-routing": "^7.4.1",
+    "workbox-strategies": "^7.4.1"
   }
 }

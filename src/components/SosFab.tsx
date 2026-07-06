@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { useMe, useStore } from '../store/context'
+import { cx } from '../lib/util'
 
 /** Hold-to-activate SOS, persistent on every screen.
  *
@@ -10,7 +11,7 @@ import { useMe, useStore } from '../store/context'
  *  also grabs a one-off location fix so the crew can find you on the map. */
 const HOLD_MS = 800
 
-export function SosFab() {
+export function SosFab({ pulse = false }: { pulse?: boolean }) {
   const me = useMe()
   const store = useStore()
   const [holding, setHolding] = useState(false)
@@ -71,7 +72,7 @@ export function SosFab() {
 
   return (
     <button
-      className={holding ? 'sos-fab holding' : 'sos-fab'}
+      className={cx('sos-fab', holding && 'holding', pulse && 'pulse')}
       aria-label="Hold to send SOS"
       onPointerDown={start}
       onPointerUp={cancel}
