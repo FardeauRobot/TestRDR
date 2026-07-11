@@ -125,7 +125,7 @@ interface PinRow {
   emoji: string
   lat: number
   lng: number
-  created_by: string
+  created_by: string | null
   created_at: string
 }
 
@@ -209,6 +209,9 @@ export class SupabaseStore extends BaseStore {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'check_requests', filter: `crew_id=eq.${crewId}` }, () => void this.refetch(crewId))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'map_pins', filter: `crew_id=eq.${crewId}` }, () => void this.refetch(crewId))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'crew_settings', filter: `crew_id=eq.${crewId}` }, () => void this.refetch(crewId))
+      // app_settings is a single global row (no crew_id) — subscribe unfiltered so
+      // an operator's global-retention change reaches every open device.
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'app_settings' }, () => void this.refetch(crewId))
       .subscribe()
   }
 

@@ -44,8 +44,8 @@ export interface MapPin {
   emoji: string
   lat: number
   lng: number
-  /** The member who dropped it. */
-  createdBy: ID
+  /** The member who dropped it, or null once that member's profile is deleted. */
+  createdBy: ID | null
   createdAt: number
 }
 

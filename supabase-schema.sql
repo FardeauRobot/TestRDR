@@ -285,6 +285,10 @@ begin
                  where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'crew_settings') then
     alter publication supabase_realtime add table public.crew_settings;
   end if;
+  if not exists (select 1 from pg_publication_tables
+                 where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'app_settings') then
+    alter publication supabase_realtime add table public.app_settings;
+  end if;
 end $$;
 
 -- crews + accounts: RLS on with NO policies → not directly readable/writable by
@@ -358,7 +362,7 @@ drop policy if exists "read app_settings" on public.app_settings;
 create policy "read app_settings" on public.app_settings for select using (true);
 
 -- push_subscriptions: same permissive, crew-scoped trust model. Endpoints are
--- unguessable, and the send-sos edge function reads them via the service role.
+-- unguessable, and the send-push edge function reads them via the service role.
 drop policy if exists "read push"   on public.push_subscriptions;
 drop policy if exists "write push"  on public.push_subscriptions;
 drop policy if exists "update push" on public.push_subscriptions;
