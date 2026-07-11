@@ -36,11 +36,21 @@ When adding any user action that mutates crew state, **add it to the `CrewStore`
 
 **Accounts:** users sign up / log in with a **nickname + password** (their global identity, carrying nickname + avatar) *before* joining a crew — `signup`/`login`/`logout`/`updateAccount` on the store; the account is persisted on the device (`crewwatch.account.v1`) and gates the app (`account` → `crew` → shell). Joining/creating a crew **auto-creates your member from the account** (`profiles.account_id`), so there is no separate onboarding step. The crew creator's member is flagged `isAdmin` by passing an admin flag through to that auto-create (no more `pendingAdmin` flag).
 
+**Two admin tiers:** a **crew admin** (`isAdmin`, managed in `ManageCrewScreen` via `setAdmin`/`removeMember`/`clearMemberSos`) acts within one crew; a global **operator** (`accounts.is_operator`, `OperatorConsole`) acts across all crews via `listAllCrews`/`deleteCrewById`/`setGlobalRetention`, gated by the security-definer `admin_*` RPCs.
+
+**Feature subsystems** (each has store methods on the `CrewStore` interface implemented in both stores):
+- **Live location** — `src/lib/liveLocation.ts` (`liveLocation` singleton + `useLiveLocation`) drives the "live" pill and calls `updateLocation`; the watch is owned at the `App.tsx` level so sharing survives tab switches. Powers the Map.
+- **Map pins** — `addPin`/`removePin` (`map_pins` table, `NewPin`/`MapPin` types), rendered on the Map alongside members.
+- **Check-in / SOS** — `setSos`, plus a request/resolve flow (`requestCheck`/`resolveCheck`, `check_requests` table, `CheckPrompt` component) for nudging someone to check in.
+- **Location retention & panic wipe** — evidence-trail mitigation (see the legal guardrail): `wipeLocations` (immediate), `setLocationRetention` (per-crew, admin), `setGlobalRetention` (operator). Backed by `app_settings`/`crew_settings` + the `wipe_stale_locations()` pg_cron job; `DemoStore` sweeps client-side.
+- **Web Push** — see the Supabase specifics above (`send-push` Edge Function + `src/lib/push.ts`).
+
 ### Supabase specifics
-- Schema lives in `supabase-schema.sql` (run in the Supabase SQL editor). Tables: `crews`, `profiles`, `events`.
+- Schema lives in `supabase-schema.sql` (run in the Supabase SQL editor). Tables: `crews`, `accounts`, `profiles`, `events`, `check_requests`, `map_pins`, `push_subscriptions`, plus the location-retention settings tables `app_settings` (global default) and `crew_settings` (per-crew override).
 - Crew create/join go through Postgres RPC functions `create_crew` / `join_crew` — passwords are **bcrypt-hashed server-side**; the `crews` table is not client-readable. Clients only ever hold a crew's UUID (after a correct name+password) plus the anon key. `humanize()` strips Postgres prefixes from RPC errors for display.
-- `profiles`/`events` are scoped by `crew_id` with permissive RLS (`using (true)`) — acceptable for a small trusted crew. The store filters by `crew_id` on every query and subscribes to realtime `postgres_changes` on both tables (any change → `refetch`).
-- Row shapes are snake_case in the DB; `toMember` / `toEvent` map them to the camelCase domain types in `src/types.ts`.
+- The crew-data tables (`profiles`, `events`, `check_requests`, `map_pins`, `crew_settings`, and read-only `app_settings`) carry permissive RLS (`using (true)`) — acceptable for a small trusted crew. `crews`/`accounts` have RLS on with **no** policies, so they're reachable only through the security-definer RPCs (password hashes never leave the DB). The store filters by `crew_id` on every query and subscribes to realtime `postgres_changes` on the crew-data tables (any change → `refetch`).
+- Row shapes are snake_case in the DB; `toMember` / `toEvent` / `toPin` map them to the camelCase domain types in `src/types.ts`.
+- Web Push runs through the `send-push` **Edge Function** (`supabase/functions/send-push`), which reads `push_subscriptions` via the service role; the client subscribes/unsubscribes via `src/lib/push.ts` (`savePushSubscription`/`removePushSubscription`).
 
 ## Domain logic lives in `src/lib/status.ts`
 
@@ -48,17 +58,19 @@ This is the heart of the app and where most behavior decisions are. It is **pure
 
 - `doseTimers` / `activeDoses` — per-substance aggregation; a dose is "active" while `minutesSince < substance.durationMins`.
 - `memberStatus` — derives the card tone (`sos` > `silent` > `mixing danger` > `quiet` > `active`/`coming up` > `ok` > `idle`). Thresholds: `QUIET_MIN=45`, `SILENT_MIN=90`.
-- `mixAlert` — flags 2+ active sedatives (`Depressant`/`Opioid`/`Dissociative`) or 2+ active stimulants (`Stimulant`/`Empathogen`) currently on board.
-- `comboRisks` / `pairRisk` — pre-log warnings shown before confirming a new log (includes the cocaethylene and "speedball" special cases).
+- `mixAlert` — the worst interaction among the substances a member currently has active. It does **pairwise** `interaction(a.id, b.id)` lookups over the active doses and picks the worst by `RISK_META[level].severity` (it no longer counts sedatives/stimulants by category).
+- `comboRisks` — pre-log warnings shown before confirming a new log, driven by the same pairwise interaction matrix (includes the cocaethylene and "speedball" special cases).
 - `checkRedose` — warns when re-logging the same substance sooner than its `redoseWaitMins`.
 
-The substance catalogue (durations, redose windows, cautions, categories) is `src/lib/substances.ts`. **All timing/mixing logic keys off the `category` and minute fields there** — edit substance data there, not in `status.ts`. Durations are deliberately rough population averages; the `DISCLAIMER` and harm-reduction-not-medical-advice framing must be preserved in any user-facing copy.
+**The pairwise interaction engine is `src/lib/interactions.ts`** (`RISK_META`, `interaction(aId, bId)` → `RiskLevel`, `interactionReason(...)`, plus `CHARTED`/`chartFor` for the reference chart in `InteractionsScreen`). `status.ts` consumes it; the cocaethylene/speedball special cases live in `interactions.ts`, **not** `status.ts`.
+
+The substance catalogue (durations, redose windows, cautions, categories) is `src/lib/substances.ts`. **Timing keys off the minute fields there; mixing risk keys off the interaction matrix in `interactions.ts`** — edit substance data / interaction pairs there, not in `status.ts`. Durations are deliberately rough population averages; the `DISCLAIMER` and harm-reduction-not-medical-advice framing must be preserved in any user-facing copy.
 
 `useNow(intervalMs)` (`src/lib/useNow.ts`) drives the live ticking by re-rendering on an interval; pass `now` into the `status.ts` functions.
 
 ## UI shape
 
-`src/App.tsx` is the whole router: a gate flow (`AuthScreen` → `CrewGate`, then the member is auto-created so `meId` is set) into a 4-tab shell (Crew / Log / Map / You) plus a `MemberDetail` overlay. No routing library; navigation is local `useState`. Invite links carry `?crew=Name` (prefills the name; password shared out-of-band), or `?crew=Name&pw=Password` for the QR code generated in Settings ("Show QR code") — scanning that auto-joins with no typing. `App.tsx`'s `readInvite()`/`scrubInviteFromUrl()` split is deliberate: the `useState` initializer that reads the query params must stay a pure read (React `StrictMode` double-invokes it in dev), while stripping `crew`/`pw` from the address bar/history is a separate, idempotent effect. Screens are in `src/screens/`, shared bits in `src/components/`.
+`src/App.tsx` is the whole router: a gate flow (`AuthScreen` → `CrewGate`, then the member is auto-created so `meId` is set) into a 4-tab shell (Crew / Log / Map / You) with **Embla-carousel swipe** between tabs, plus a stack of overlay screens opened from within it: `MemberDetail`, `SettingsScreen` (the "You" tab), `BulkLogScreen` (log for several members at once → `logConsumptionFor`), `InteractionsScreen` (the combo reference chart — reached from Log/Settings, deliberately not a tab), `ManageCrewScreen` (crew-admin), and `OperatorConsole` (global operator). No routing library; navigation is local `useState`. Invite links carry `?crew=Name` (prefills the name; password shared out-of-band), or `?crew=Name&pw=Password` for the QR code generated in Settings ("Show QR code") — scanning that auto-joins with no typing. `App.tsx`'s `readInvite()`/`scrubInviteFromUrl()` split is deliberate: the `useState` initializer that reads the query params must stay a pure read (React `StrictMode` double-invokes it in dev), while stripping `crew`/`pw` from the address bar/history is a separate, idempotent effect. Screens are in `src/screens/`, shared bits in `src/components/`.
 
 Map uses Leaflet + react-leaflet with free CARTO dark tiles (no API key). The PWA service worker (`vite-plugin-pwa`, configured in `vite.config.ts`) runtime-caches those map tiles `CacheFirst`; it does **not** precache them.
 
