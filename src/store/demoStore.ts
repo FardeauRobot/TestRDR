@@ -17,6 +17,10 @@ interface Bucket {
   events: ConsumptionEvent[]
   checkRequests: CheckRequest[]
   pins: MapPin[]
+  /** This (demo) crew's location-retention override in minutes; null = inherit global. */
+  retentionMins?: number | null
+  /** App-wide default retention window in minutes (mirrors the synced default). */
+  globalRetentionMins?: number | null
 }
 
 /** Demo accounts keep the password in localStorage — acceptable because demo mode
@@ -45,7 +49,9 @@ function seed(): Bucket {
     checkRequests: [],
     pins: [
       { id: uid(), label: 'Camp', emoji: '⛺', lat: CENTER.lat - 0.0009, lng: CENTER.lng + 0.0004, createdBy: 'm-robin', createdAt: now - 100 * MIN }
-    ]
+    ],
+    retentionMins: null,
+    globalRetentionMins: 180
   }
 }
 
@@ -67,9 +73,37 @@ export class DemoStore extends BaseStore {
     this.accounts = this.loadAccounts()
     const account = loadAccount()
     const crew = account ? loadCrew() : null
-    this.state = { account, crew, members: this.bucket.members, events: this.bucket.events, checkRequests: this.bucket.checkRequests, pins: this.bucket.pins, meId: null, ready: true }
+    this.state = { account, crew, members: this.bucket.members, events: this.bucket.events, checkRequests: this.bucket.checkRequests, pins: this.bucket.pins, meId: null, locationRetentionMins: this.bucket.retentionMins ?? null, globalRetentionMins: this.bucket.globalRetentionMins ?? null, ready: true }
     // Signed in and previously in a crew → make sure our member exists and land in.
     if (account && crew) this.ensureProfile(crew, false)
+    // No cron in demo mode → sweep stale locations client-side on load.
+    this.sweepStale()
+  }
+
+  /** Effective retention window in minutes (crew override, else global). 0 = off. */
+  private effectiveRetention(): number {
+    const crew = this.bucket.retentionMins
+    const mins = crew == null ? (this.bucket.globalRetentionMins ?? 0) : crew
+    return mins > 0 ? mins : 0
+  }
+
+  /** Demo stand-in for the server-side wipe: forget locations older than the window. */
+  private sweepStale(): void {
+    const mins = this.effectiveRetention()
+    if (mins <= 0) return
+    const cutoff = Date.now() - mins * MIN
+    let changed = false
+    this.bucket.members = this.bucket.members.map((m) => {
+      if (m.location && m.location.at < cutoff) {
+        changed = true
+        return { ...m, location: undefined }
+      }
+      return m
+    })
+    if (changed) {
+      this.persist()
+      this.set({ members: this.bucket.members })
+    }
   }
 
   private loadBucket(): Bucket {
@@ -77,13 +111,13 @@ export class DemoStore extends BaseStore {
       const raw = localStorage.getItem(DATA_KEY)
       if (raw) {
         const p = JSON.parse(raw)
-        return { members: p.members ?? [], events: p.events ?? [], checkRequests: p.checkRequests ?? [], pins: p.pins ?? [] }
+        return { members: p.members ?? [], events: p.events ?? [], checkRequests: p.checkRequests ?? [], pins: p.pins ?? [], retentionMins: p.retentionMins ?? null, globalRetentionMins: p.globalRetentionMins ?? 180 }
       }
     } catch {
       /* ignore */
     }
     // Sample crew only in local dev (`npm run dev`); deployed builds start empty.
-    const fresh = import.meta.env.DEV ? seed() : { members: [], events: [], checkRequests: [], pins: [] }
+    const fresh = import.meta.env.DEV ? seed() : { members: [], events: [], checkRequests: [], pins: [], retentionMins: null, globalRetentionMins: 180 }
     localStorage.setItem(DATA_KEY, JSON.stringify(fresh))
     return fresh
   }
@@ -322,6 +356,28 @@ export class DemoStore extends BaseStore {
     )
     this.persist()
     this.set({ members: this.bucket.members })
+  }
+
+  async wipeLocations(): Promise<void> {
+    this.bucket.members = this.bucket.members.map((m) =>
+      m.location ? { ...m, location: undefined, updatedAt: Date.now() } : m
+    )
+    this.persist()
+    this.set({ members: this.bucket.members })
+  }
+
+  async setLocationRetention(mins: number | null): Promise<void> {
+    this.bucket.retentionMins = mins
+    this.persist()
+    this.set({ locationRetentionMins: mins })
+    this.sweepStale()
+  }
+
+  async setGlobalRetention(mins: number): Promise<void> {
+    this.bucket.globalRetentionMins = Math.max(mins, 0)
+    this.persist()
+    this.set({ globalRetentionMins: this.bucket.globalRetentionMins })
+    this.sweepStale()
   }
 
   // Demo mode is single-device with no real cross-crew data, so the operator

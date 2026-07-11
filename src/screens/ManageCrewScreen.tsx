@@ -8,13 +8,31 @@ import { cx, formatAgo } from '../lib/util'
 /** Admin-only console for moderating a single crew: manage members' roles,
  *  clear SOS, remove people, and delete the whole crew. Reached from Settings
  *  and rendered as a full-screen overlay (like MemberDetail). */
+/** Per-crew location-retention choices. `null` = inherit the app-wide default. */
+const CREW_RETENTION: { mins: number | null; label: string }[] = [
+  { mins: null, label: 'App default' },
+  { mins: 0, label: 'Off' },
+  { mins: 60, label: '1h' },
+  { mins: 180, label: '3h' },
+  { mins: 1440, label: '24h' }
+]
+
+function fmtWindow(mins: number | null): string {
+  if (mins == null) return 'app default'
+  if (mins === 0) return 'off — never wiped'
+  if (mins % 1440 === 0) return `${mins / 1440}d`
+  if (mins % 60 === 0) return `${mins / 60}h`
+  return `${mins} min`
+}
+
 export function ManageCrewScreen({ onBack }: { onBack: () => void }) {
-  const { crew, members, events, meId } = useCrew()
+  const { crew, members, events, meId, locationRetentionMins, globalRetentionMins } = useCrew()
   const store = useStore()
   const now = useNow(5000)
   const me = useMe()
 
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [retBusy, setRetBusy] = useState(false)
   const [delOpen, setDelOpen] = useState(false)
   const [delPwd, setDelPwd] = useState('')
   const [delErr, setDelErr] = useState<string | null>(null)
@@ -65,6 +83,25 @@ export function ManageCrewScreen({ onBack }: { onBack: () => void }) {
     }
     if (window.confirm(`Remove ${name} from the crew? This deletes their logs too.`)) {
       await run(id, () => store.removeMember(id))
+    }
+  }
+
+  async function setRetention(mins: number | null) {
+    setRetBusy(true)
+    try {
+      await store.setLocationRetention(mins)
+    } finally {
+      setRetBusy(false)
+    }
+  }
+
+  async function wipeNow() {
+    if (!window.confirm("Forget everyone's location right now? People sharing live will reappear on their next update.")) return
+    setRetBusy(true)
+    try {
+      await store.wipeLocations()
+    } finally {
+      setRetBusy(false)
     }
   }
 
@@ -134,6 +171,34 @@ export function ManageCrewScreen({ onBack }: { onBack: () => void }) {
           </div>
         )
       })}
+
+      <div className="section-title">Location privacy</div>
+      <div className="card">
+        <div className="what" style={{ lineHeight: 1.4 }}>
+          Locations older than this window are automatically forgotten. Shorter is safer — the app
+          keeps a geolocated trail otherwise.
+        </div>
+        <div className="btn-row" style={{ marginTop: 10, flexWrap: 'wrap' }}>
+          {CREW_RETENTION.map((opt) => (
+            <button
+              key={String(opt.mins)}
+              className={cx('btn', locationRetentionMins === opt.mins ? '' : 'ghost')}
+              style={{ width: 'auto', padding: '6px 14px' }}
+              disabled={retBusy}
+              onClick={() => void setRetention(opt.mins)}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        <div className="what" style={{ marginTop: 8 }}>
+          Auto-wipe: <strong>{fmtWindow(locationRetentionMins)}</strong>
+          {locationRetentionMins == null && ` (currently ${fmtWindow(globalRetentionMins)})`}
+        </div>
+        <button className="btn danger" style={{ marginTop: 12 }} disabled={retBusy} onClick={() => void wipeNow()}>
+          📍 Wipe all locations now
+        </button>
+      </div>
 
       <div className="section-title">Danger zone</div>
       {!delOpen ? (

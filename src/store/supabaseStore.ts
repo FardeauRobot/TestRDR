@@ -170,6 +170,16 @@ export class SupabaseStore extends BaseStore {
     await this.refetch(crew.id)
     if (!this.state.meId) await this.createMyProfile(crew.id, createAsAdmin)
     this.subscribe_(crew.id)
+    // Fallback for deployments without pg_cron: sweep stale locations on entry so
+    // old coordinates get forgotten whenever someone opens the app. Best-effort.
+    void (async () => {
+      try {
+        await this.sb.rpc('wipe_stale_locations')
+        await this.refetch(crew.id)
+      } catch {
+        /* housekeeping is additive; ignore failures */
+      }
+    })()
   }
 
   /** Insert this account's member in the crew (idempotent — a unique (crew_id,
@@ -198,18 +208,21 @@ export class SupabaseStore extends BaseStore {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'events', filter: `crew_id=eq.${crewId}` }, () => void this.refetch(crewId))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'check_requests', filter: `crew_id=eq.${crewId}` }, () => void this.refetch(crewId))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'map_pins', filter: `crew_id=eq.${crewId}` }, () => void this.refetch(crewId))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'crew_settings', filter: `crew_id=eq.${crewId}` }, () => void this.refetch(crewId))
       .subscribe()
   }
 
   private async refetch(crewId: string): Promise<void> {
-    const [{ data: profiles }, { data: events }, { data: checks }, { data: pins }] = await Promise.all([
+    const [{ data: profiles }, { data: events }, { data: checks }, { data: pins }, { data: crewSettings }, { data: appSettings }] = await Promise.all([
       this.sb.from('profiles').select('*').eq('crew_id', crewId),
       // NOTE: 500-event cap is a known boundary — a long-lived crew exceeding it
       // will drop its oldest logs from timers/history. Paginate/scope by time if hit.
       this.sb.from('events').select('*').eq('crew_id', crewId).order('at', { ascending: false }).limit(500),
       // Recent check-in requests; older resolved ones aren't needed for the UI.
       this.sb.from('check_requests').select('*').eq('crew_id', crewId).order('at', { ascending: false }).limit(100),
-      this.sb.from('map_pins').select('*').eq('crew_id', crewId)
+      this.sb.from('map_pins').select('*').eq('crew_id', crewId),
+      this.sb.from('crew_settings').select('location_retention_mins').eq('crew_id', crewId).maybeSingle(),
+      this.sb.from('app_settings').select('location_retention_mins').limit(1).maybeSingle()
     ])
     const members = ((profiles ?? []) as ProfileRow[]).map(toMember)
     // "Me" is the profile tied to my account; null if it's gone (kicked/crew deleted).
@@ -220,6 +233,8 @@ export class SupabaseStore extends BaseStore {
       events: ((events ?? []) as EventRow[]).map(toEvent),
       checkRequests: ((checks ?? []) as CheckRequestRow[]).map(toCheckRequest),
       pins: ((pins ?? []) as PinRow[]).map(toPin),
+      locationRetentionMins: (crewSettings as { location_retention_mins: number | null } | null)?.location_retention_mins ?? null,
+      globalRetentionMins: (appSettings as { location_retention_mins: number | null } | null)?.location_retention_mins ?? null,
       meId
     })
   }
@@ -480,6 +495,26 @@ export class SupabaseStore extends BaseStore {
     await this.patchMember(memberId, { isAdmin: on })
   }
 
+  async wipeLocations(): Promise<void> {
+    const crew = this.state.crew
+    if (!crew) return
+    const now = new Date().toISOString()
+    await this.sb
+      .from('profiles')
+      .update({ lat: null, lng: null, accuracy: null, loc_at: null, updated_at: now })
+      .eq('crew_id', crew.id)
+    await this.refetch(crew.id)
+  }
+
+  async setLocationRetention(mins: number | null): Promise<void> {
+    const crew = this.state.crew
+    if (!crew) return
+    await this.sb
+      .from('crew_settings')
+      .upsert({ crew_id: crew.id, location_retention_mins: mins, updated_at: new Date().toISOString() }, { onConflict: 'crew_id' })
+    await this.refetch(crew.id)
+  }
+
   async listAllCrews(): Promise<CrewSummary[]> {
     const account = this.state.account
     if (!account) return []
@@ -500,6 +535,14 @@ export class SupabaseStore extends BaseStore {
     if (!account) return
     const { error } = await this.sb.rpc('admin_delete_crew_by_id', { p_account_id: account.id, p_crew_id: crewId })
     if (error) throw new Error(humanize(error.message))
+  }
+
+  async setGlobalRetention(mins: number): Promise<void> {
+    const account = this.state.account
+    if (!account) return
+    const { error } = await this.sb.rpc('set_global_retention', { p_account_id: account.id, p_mins: mins })
+    if (error) throw new Error(humanize(error.message))
+    this.set({ globalRetentionMins: Math.max(mins, 0) })
   }
 }
 

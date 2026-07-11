@@ -375,3 +375,38 @@ show a message + reload/reset instead of a blank page.
 **Reminder when shipping schema-touching features:** re-run `supabase-schema.sql`
 in Supabase, then `git push` to redeploy — the UI may appear from the deploy alone,
 but DB-backed actions error until the schema is updated.
+
+## 15. Legal compliance (FR & EU) — read before sensitive changes
+
+`docs/11-legal-compliance.md` is a risk map of the laws that touch this app
+(GDPR, French drug law, EU MDR, liability, the TripSit CC BY-NC-SA licence). It is
+**not legal advice** — it's a guide to danger zones and what to take to a real
+lawyer/DPO/CNIL. The two spine ideas: (1) **private tool vs. operated service**
+decides how much of GDPR applies — the operator console pushes toward "operated
+service" (data controller of strangers' special-category data); (2) **the DB is a
+self-incriminating, geolocated evidence trail** of a criminal offence in France,
+so EU-region hosting + retention auto-wipe + real RLS matter as much as compliance.
+CLAUDE.md carries the always-loaded guardrail; that doc's §9 checklist and §10
+"when to consult" list are the actionable parts.
+
+## 16. Location retention & panic wipe — DONE
+
+Locations no longer linger forever (evidence-trail mitigation, §11 doc §2). Two
+DB tables: `app_settings` (single row, global default `location_retention_mins`,
+default 180) and `crew_settings` (per-crew override; NULL = inherit global,
+0 = never). A security-definer `wipe_stale_locations()` nulls any `profiles`
+location older than each crew's effective window; it runs on a **pg_cron** job
+(`crewwatch-wipe-locations`, every 5 min) **and** is called opportunistically by
+`SupabaseStore.enter()` on app open — so wiping still happens even if pg_cron
+isn't enabled (the cron block is wrapped so a DB without pg_cron doesn't break the
+idempotent schema). Operator-only `set_global_retention` RPC sets the default.
+
+Store surface (interface + **both** stores): `wipeLocations()` (immediate panic
+wipe of the current crew), `setLocationRetention(mins|null)` (per-crew, admin),
+`setGlobalRetention(mins)` (operator). `CrewState` gained `locationRetentionMins`
++ `globalRetentionMins`. Demo mode has no cron, so `DemoStore` sweeps stale
+locations client-side (`sweepStale()`) on load and after any change. UI (minimal,
+will move in the interface redesign): a "Location privacy" section in
+`ManageCrewScreen` (retention chips + "Wipe locations now") and a global selector
+in `OperatorConsole`. **Requires re-running `supabase-schema.sql`**; enable
+pg_cron in the Supabase dashboard for background (app-closed) wipes.

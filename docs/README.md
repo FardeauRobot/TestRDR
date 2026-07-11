@@ -23,6 +23,7 @@ features can slot in without re-discovering everything.
 | 8 | [Build log](08-build-log.md) | Step-by-step of what was built, in order |
 | 9 | [Tech-debt review](09-tech-debt-and-review.md) | The two code reviews, what was fixed, what's deferred |
 | 10 | [Interface & features brief](10-interface-and-features.md) | Locked design decisions for the redesign + new features (not yet built) |
+| 11 | [Legal compliance (FR & EU)](11-legal-compliance.md) | GDPR, French drug law, MDR, liability, TripSit licence — the risk map + what to check before shipping legally sensitive features |
 
 ## The one rule to remember
 

@@ -106,6 +106,25 @@ create table if not exists public.map_pins (
 );
 create index if not exists map_pins_crew_idx on public.map_pins(crew_id);
 
+-- Global app settings (single row). Currently just the default location
+-- retention: a member's location is auto-wiped once it's older than this many
+-- minutes (0 = never). See wipe_stale_locations() + the pg_cron job below.
+create table if not exists public.app_settings (
+  id                      boolean primary key default true,
+  location_retention_mins integer not null default 180,
+  updated_at              timestamptz not null default now(),
+  constraint app_settings_singleton check (id)
+);
+insert into public.app_settings (id) values (true) on conflict (id) do nothing;
+
+-- Per-crew override of the location-retention window (minutes). NULL = inherit
+-- the global app_settings default; 0 = never auto-wipe locations for this crew.
+create table if not exists public.crew_settings (
+  crew_id                 uuid primary key references public.crews(id) on delete cascade,
+  location_retention_mins integer,
+  updated_at              timestamptz not null default now()
+);
+
 -- Safe to re-run on an existing database (adds new columns if missing).
 alter table public.profiles add column if not exists is_admin     boolean not null default false;
 alter table public.profiles add column if not exists mix_warnings boolean not null default true;
@@ -262,6 +281,10 @@ begin
                  where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'map_pins') then
     alter publication supabase_realtime add table public.map_pins;
   end if;
+  if not exists (select 1 from pg_publication_tables
+                 where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'crew_settings') then
+    alter publication supabase_realtime add table public.crew_settings;
+  end if;
 end $$;
 
 -- crews + accounts: RLS on with NO policies → not directly readable/writable by
@@ -278,6 +301,10 @@ alter table public.events   enable row level security;
 alter table public.check_requests      enable row level security;
 alter table public.push_subscriptions  enable row level security;
 alter table public.map_pins            enable row level security;
+alter table public.crew_settings       enable row level security;
+-- app_settings: readable by everyone (so clients show the current default), but
+-- writable ONLY via the operator-gated set_global_retention RPC below (no write policy).
+alter table public.app_settings        enable row level security;
 
 -- Policies (drop-then-create so the whole script is safe to re-run).
 drop policy if exists "read profiles"   on public.profiles;
@@ -316,6 +343,19 @@ drop policy if exists "delete pins" on public.map_pins;
 create policy "read pins"   on public.map_pins for select using (true);
 create policy "write pins"  on public.map_pins for insert with check (true);
 create policy "delete pins" on public.map_pins for delete using (true);
+
+-- crew_settings: same permissive, crew-scoped trust model. A crew admin sets the
+-- retention window (UI-gated); the row is keyed by the crew's unguessable uuid.
+drop policy if exists "read crew_settings"   on public.crew_settings;
+drop policy if exists "write crew_settings"  on public.crew_settings;
+drop policy if exists "update crew_settings" on public.crew_settings;
+create policy "read crew_settings"   on public.crew_settings for select using (true);
+create policy "write crew_settings"  on public.crew_settings for insert with check (true);
+create policy "update crew_settings" on public.crew_settings for update using (true) with check (true);
+
+-- app_settings: read-only to clients; changes go through set_global_retention (operator-gated).
+drop policy if exists "read app_settings" on public.app_settings;
+create policy "read app_settings" on public.app_settings for select using (true);
 
 -- push_subscriptions: same permissive, crew-scoped trust model. Endpoints are
 -- unguessable, and the send-sos edge function reads them via the service role.
@@ -392,6 +432,68 @@ revoke all on function public.admin_delete_crew_by_id(uuid, uuid) from public;
 grant execute on function public.admin_list_crews(uuid)          to anon, authenticated;
 grant execute on function public.admin_delete_crew_by_id(uuid, uuid) to anon, authenticated;
 
--- Optional housekeeping: forget locations older than a day (run manually or via cron).
--- update public.profiles set lat = null, lng = null, loc_at = null
---   where loc_at < now() - interval '1 day';
+-- ---------------------------------------------------------------------------
+-- Location retention: auto-wipe stale coordinates.
+-- Why: the events + locations are a self-incriminating, geolocated trail (see
+-- docs/11-legal-compliance.md §2). Keeping only recent locations shrinks that
+-- exposure. Effective window per crew = crew override, else the global default;
+-- 0/absent = never wipe.
+-- ---------------------------------------------------------------------------
+
+-- One wipe pass over EVERY crew. Nulls out any location older than that crew's
+-- effective retention window. Safe to call any time; it's a no-op when nothing
+-- is stale. Granted to anon so the app can trigger it on load (see below).
+create or replace function public.wipe_stale_locations()
+returns integer
+language plpgsql security definer set search_path = public, extensions as $$
+declare wiped integer;
+begin
+  with eff as (
+    select c.id as crew_id,
+           coalesce(cs.location_retention_mins, gs.location_retention_mins, 0) as mins
+    from public.crews c
+    cross join (select location_retention_mins from public.app_settings limit 1) gs
+    left join public.crew_settings cs on cs.crew_id = c.id
+  )
+  update public.profiles p
+     set lat = null, lng = null, accuracy = null, loc_at = null
+    from eff
+   where eff.crew_id = p.crew_id
+     and eff.mins > 0
+     and p.loc_at is not null
+     and p.loc_at < now() - (eff.mins * interval '1 minute');
+  get diagnostics wiped = row_count;
+  return wiped;
+end; $$;
+
+-- Operator-only: set the GLOBAL default retention window (minutes; 0 = off).
+create or replace function public.set_global_retention(p_account_id uuid, p_mins integer)
+returns void
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if not public.is_operator(p_account_id) then
+    raise exception 'Not authorised';
+  end if;
+  update public.app_settings set location_retention_mins = greatest(coalesce(p_mins, 0), 0), updated_at = now() where id;
+end; $$;
+
+revoke all on function public.wipe_stale_locations()             from public;
+revoke all on function public.set_global_retention(uuid, integer) from public;
+grant execute on function public.wipe_stale_locations()             to anon, authenticated;
+grant execute on function public.set_global_retention(uuid, integer) to anon, authenticated;
+
+-- Background auto-wipe via pg_cron (runs even when nobody has the app open).
+-- Wrapped so a database without pg_cron doesn't break this idempotent script —
+-- the app also calls wipe_stale_locations() on load as a fallback, so stale
+-- locations still get cleaned whenever someone opens Crew Watch. To get true
+-- background wipes, enable pg_cron (Supabase dashboard → Database → Extensions).
+do $$
+begin
+  create extension if not exists pg_cron;
+  if exists (select 1 from cron.job where jobname = 'crewwatch-wipe-locations') then
+    perform cron.unschedule('crewwatch-wipe-locations');
+  end if;
+  perform cron.schedule('crewwatch-wipe-locations', '*/5 * * * *', 'select public.wipe_stale_locations()');
+exception when others then
+  raise notice 'pg_cron not configured (%); relying on app-triggered wipe. Enable pg_cron in the Supabase dashboard for background auto-wipe.', sqlerrm;
+end $$;

@@ -18,6 +18,11 @@ export interface CrewState {
   pins: MapPin[]
   /** The id of this device's own profile in the current crew, or null. */
   meId: ID | null
+  /** This crew's location-retention override in minutes; null = inherit the
+   *  global default, 0 = never auto-wipe. (See setLocationRetention.) */
+  locationRetentionMins: number | null
+  /** The app-wide default location-retention window in minutes (0 = off). */
+  globalRetentionMins: number | null
   /** Whether the store has finished its first load. */
   ready: boolean
 }
@@ -116,18 +121,25 @@ export interface CrewStore {
   clearMemberSos(memberId: ID): Promise<void>
   /** Promote a member to admin, or demote them back to a regular member. */
   setAdmin(memberId: ID, on: boolean): Promise<void>
+  /** Immediately forget every member's location in this crew (a "panic wipe"). */
+  wipeLocations(): Promise<void>
+  /** Set this crew's location-retention window in minutes (0 = never auto-wipe,
+   *  null = inherit the app-wide default). */
+  setLocationRetention(mins: number | null): Promise<void>
 
   // --- Operator only (cross-crew; gated by the signed-in account's isOperator) ---
   /** List every crew in the app with rollup counts. Operator accounts only. */
   listAllCrews(): Promise<CrewSummary[]>
   /** Permanently delete any crew by id (cascades to its profiles + logs). */
   deleteCrewById(crewId: string): Promise<void>
+  /** Set the app-wide default location-retention window in minutes (0 = off). */
+  setGlobalRetention(mins: number): Promise<void>
 }
 
 /** Reusable subscription + immutable-snapshot machinery for store impls. */
 export abstract class BaseStore implements CrewStore {
   abstract readonly mode: 'demo' | 'synced'
-  protected state: CrewState = { account: null, crew: null, members: [], events: [], checkRequests: [], pins: [], meId: null, ready: false }
+  protected state: CrewState = { account: null, crew: null, members: [], events: [], checkRequests: [], pins: [], meId: null, locationRetentionMins: null, globalRetentionMins: null, ready: false }
   private listeners = new Set<() => void>()
 
   getState(): CrewState {
@@ -173,6 +185,9 @@ export abstract class BaseStore implements CrewStore {
   abstract removeMember(memberId: ID): Promise<void>
   abstract clearMemberSos(memberId: ID): Promise<void>
   abstract setAdmin(memberId: ID, on: boolean): Promise<void>
+  abstract wipeLocations(): Promise<void>
+  abstract setLocationRetention(mins: number | null): Promise<void>
   abstract listAllCrews(): Promise<CrewSummary[]>
   abstract deleteCrewById(crewId: string): Promise<void>
+  abstract setGlobalRetention(mins: number): Promise<void>
 }

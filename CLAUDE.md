@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Crew Watch** is a private, installable PWA for a small harm-reduction "buddy" crew. Members log what/when they consumed; the app shows live per-substance timers since each person's last dose, flags people who go quiet, supports check-ins/SOS, and has a map to find each other in an emergency. **Hard constraint: stays a PWA so it costs nothing to distribute** (no Apple $99/yr or Play $25 account). True iOS background location is the one feature that would force going native.
 
+## ⚖️ Legal guardrail (read before certain changes)
+
+This app handles **drug-use logs + live location** — legally sensitive data under GDPR and French drug law. **Before adding or changing anything that touches personal data, drug-use logging, location, public/stranger distribution, or monetisation, consult [`docs/11-legal-compliance.md`](docs/11-legal-compliance.md) and surface any conflict to the user *before* implementing.** In particular, refuse/flag features that **gamify or glamorise consumption**, recommend substances/doses/sources/combos, or help users **obtain/sell/share** substances (these cross French drug-law lines), and flag anything that widens who can read crew data or weakens the disclaimer / emergency-number messaging. The doc's §10 has the full trigger list.
+
 ## Commands
 
 ```bash
