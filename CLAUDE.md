@@ -2,6 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Keeping this file current (do this without being asked)
+
+**Treat CLAUDE.md as part of the change, not an afterthought.** Whenever a change alters something this file documents, update the relevant section **in the same change / commit**. Triggers:
+
+- the **`CrewStore` interface** or a store method (add/remove/rename) → update the two-mode + subsystems sections;
+- **schema** tables/columns/RPCs, or the tables list → update the Supabase specifics;
+- **screens/navigation** (new screen, tab, or overlay) → update the UI shape section;
+- **domain logic** (`status.ts` / `interactions.ts` / `substances.ts` behavior, thresholds) → update the domain-logic section;
+- **commands** (`package.json` scripts), the **legal guardrail**, or any hard constraint.
+
+Keep it high-level and current — durable architecture and the "one rule" invariants, **not** a changelog (transient work goes in `RECAP.md` / `docs/`). When you notice drift (a claim that no longer matches the code), fix it in passing and mention it. If unsure whether something belongs here vs. `docs/`, prefer a one-line pointer here and the detail in `docs/`.
+
 ## What this is
 
 **Crew Watch** is a private, installable PWA for a small harm-reduction "buddy" crew. Members log what/when they consumed; the app shows live per-substance timers since each person's last dose, flags people who go quiet, supports check-ins/SOS, and has a map to find each other in an emergency. **Hard constraint: stays a PWA so it costs nothing to distribute** (no Apple $99/yr or Play $25 account). True iOS background location is the one feature that would force going native.
