@@ -8,3 +8,6 @@ dist-ssr
 .DS_Store
 .vscode/*
 !.vscode/extensions.json
+
+# Personal Claude Code settings (not shared)
+.claude/settings.local.json
